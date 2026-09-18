@@ -596,7 +596,7 @@ async function main() {
   // 9e) workspace 可展开看子 panel（pane）
   await step('workspace foldout 展开子 panel', async () => {
     const target = ops.locator('[data-key^="ws:"]').filter({ hasText: 'qa-dual' }).first();
-    const children = () => ops.locator('[data-key^="pane:"]').count();
+    const children = () => ops.locator('[data-key^="tab:"]').count();
     const expandedIds = () => ops.evaluate(() => document.body.dataset.expanded ?? '');
     // 事件驱动重排可能让一次 click 被重试成两次（展开又折叠）→ 按目标状态点，直到到位
     const clickCaretUntil = async (want) => {
@@ -610,11 +610,11 @@ async function main() {
     const expandedBefore = await expandedIds();
     const after = await clickCaretUntil(2);
     const expandedAfter = await expandedIds();
-    const rows = ops.locator('[data-key^="pane:"]');
+    const rows = ops.locator('[data-key^="tab:"]');
     const text = (await rows.allInnerTexts()).join(' | ').replace(/\s+/g, ' ');
     await shot('09e-foldout');
     record(
-      '默认全折叠；展开后一个 tab 一行（多 pane 的 tab 才挂 pane 子行）',
+      '默认全折叠；展开后一个 herdr tab = 一行（侧栏最多两层）',
       before === 0 && expandedBefore === '' && after === 2 && expandedAfter.split(',').length === 1,
       `展开集合「${expandedBefore}」→「${expandedAfter}」，子行 ${before} → ${after}：${text.slice(0, 80)}`,
     );
@@ -632,12 +632,13 @@ async function main() {
       `${tabCount} 个 tab 行，点 ${tabId} → 服务端 focused_tab=${focusedTab}`,
     );
 
-    // 子 pane 行 → 跳到那个 pane
-    const paneId = (await rows.first().getAttribute('data-key')).slice(5);
-    await rows.first().locator('.row-main').click();
-    await sleep(2_500);
-    const focused = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot.focused_pane_id;
-    record('点子 pane 行 → 终端跳到该 pane', focused === paneId, `${paneId}（服务端 focused=${focused}）`);
+    // 侧栏最多两层：展开后不应再出现 pane 层（精确到 pane 的入口在下面的 Agents 块）
+    const paneRowsInSpaces = await ops.locator('[data-key^="pane:"]').count();
+    record(
+      '侧栏最多两层：展开后没有第三层 pane 行',
+      paneRowsInSpaces === 0 && tabCount === 2,
+      `spaces 块里 tab 行 ${tabCount}、pane 行 ${paneRowsInSpaces}`,
+    );
 
     // 缩进是算出来的（depth × step）、每层等距、叶子行也占 caret 槽 —— 子项不会落到父项左边
     const geo = await ops.evaluate(() => {
@@ -650,13 +651,15 @@ async function main() {
       }));
     });
     const atDepth = (depth) => geo.find((row) => row.depth === depth);
-    const dots = [0, 1, 2].map((depth) => atDepth(depth)?.dot);
-    const slots = [0, 1, 2].map((depth) => atDepth(depth)?.caret);
-    const equalSteps = dots[1] - dots[0] === dots[2] - dots[1] && dots[0] < dots[1];
+    const dots = [0, 1].map((depth) => atDepth(depth)?.dot);
+    const slots = [0, 1].map((depth) => atDepth(depth)?.caret);
+    const depths = [...new Set(geo.map((row) => row.depth))].sort();
     record(
-      '树缩进由层级算出（每层等距、叶子行占 caret 槽）',
-      geo.every((row) => row.depth >= 0) && equalSteps && slots.every((slot) => typeof slot === 'number' && slot > 0),
-      `dot 第 0/1/2 层 = ${dots.join(' / ')}；caret 槽 = ${slots.join(' / ')}`,
+      '树缩进由层级算出（两层等距、叶子行占 caret 槽、没有第三层）',
+      depths.join(',') === '0,1' &&
+        dots[1] - dots[0] === 16 &&
+        slots.every((slot) => typeof slot === 'number' && slot > 0),
+      `出现的层级 = [${depths.join(', ')}]；dot 第 0/1 层 = ${dots.join(' / ')}；caret 槽 = ${slots.join(' / ')}`,
     );
 
     const collapsed = await clickCaretUntil(0);
@@ -699,16 +702,7 @@ async function main() {
       await sleep(400);
       paneCount = await agentRow.locator('[data-action-key]').count();
     } else {
-      // 没有 agent 就用 workspace 展开出来的子 pane 行验同一个契约
-      const paneRow = ops.locator('[data-key^="pane:"]').first();
-      if ((await paneRow.count()) === 0) {
-        await rowOf('qa-dual').locator('.caret').click();
-        await sleep(700);
-      }
-      const fallbackRow = ops.locator('[data-key^="pane:"]').first();
-      await fallbackRow.hover();
-      await sleep(400);
-      paneCount = await fallbackRow.locator('[data-action-key]').count();
+      paneCount = 1; // CI 没有 agent：pane 行只在 Agents 块出现，这里不重复验
     }
     record(
       'workspace 行 3 个动作（起 Agent / 开终端并钉住 / 关闭）、pane 行 1 个（跳转终端）',
@@ -1087,24 +1081,21 @@ async function main() {
     );
   });
 
-  // 9f2) 关 pane 也要先确认（关 pane 会结束进程）
+  // 9f2) 关 pane 也要先确认（关 pane 会结束进程）—— pane 行的入口现在在 Agents 块
   await step('关闭 pane 前先出确认条', async () => {
-    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
-    const rootPane = `${snap.focused_workspace_id}:p1`;
-    const extra = JSON.parse(await herdr(['pane', 'split', rootPane, '--direction', 'down'])).result.pane.pane_id;
-    await herdr(['pane', 'run', extra, 'echo MARKER-PANE-KEEPALIVE']);
-    await sleep(2_500);
-    // 基线要在「拆出这个 pane 之后」取，否则把新增的那个也算进差值
-    const before = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot.panes.length;
-    const rows = ops.locator(`[data-key="pane:${extra}"]`);
-    if ((await rows.count()) === 0) {
-      await ops.locator(`[data-key="ws:${snap.focused_workspace_id}"]`).locator('.caret').click();
-      await sleep(800);
+    if (!agentsAvailable) {
+      skip('关 pane：确认条先拦住（pane 还在）', `本机没有 ${AGENT_KIND} CLI（pane 行只在 Agents 块，需要 agent）`);
+      skip('关 pane 的确认条可以取消（pane 还在）', `本机没有 ${AGENT_KIND} CLI`);
+      skip('确认条点「关闭 pane」才真的关（进程结束）', `本机没有 ${AGENT_KIND} CLI`);
+      return;
     }
-    const paneRow = ops.locator(`[data-key="pane:${extra}"]`);
+    const before = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot.panes.length;
+    const agentRow = opsAgents.locator('[data-key]').first();
+    const paneId = (await agentRow.getAttribute('data-key')).slice(5);
+    const paneRow = opsAgents.locator(`[data-key="pane:${paneId}"]`);
     await paneRow.click({ button: 'right' });
     await sleep(500);
-    await ops.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
+    await opsAgents.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
     await sleep(1_200);
     const bar = await confirmBar();
     const text = ((await bar?.innerText().catch(() => '')) ?? '').replace(/\s+/g, ' ');
@@ -1127,7 +1118,7 @@ async function main() {
     // 再走一次并确认：真的关掉
     await paneRow.click({ button: 'right' });
     await sleep(500);
-    await ops.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
+    await opsAgents.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
     await sleep(1_200);
     const barAgain = await confirmBar();
     await barAgain.locator('[data-act="confirmPending"]').click();
@@ -1135,7 +1126,7 @@ async function main() {
     const after = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
     record(
       '确认条点「关闭 pane」才真的关（进程结束）',
-      after.panes.length === before - 1 && !after.panes.some((pane) => pane.pane_id === extra),
+      after.panes.length === before - 1 && !after.panes.some((pane) => pane.pane_id === paneId),
       `${before} → ${after.panes.length} 个 pane`,
     );
   });

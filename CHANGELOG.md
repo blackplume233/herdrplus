@@ -4,6 +4,9 @@
 
 - **树缩进不再写死像素**：原来父/子/孙三层各有一份硬编码 `padding-left`（40px / 62px），加一层或改基础内边距就会串位。现在缩进 = `--hp-row-pad + 层级 × --hp-indent`，层级由渲染层写在行上的 `--depth` 决定；三层版式尺寸（行高 / 左侧基准 / caret 槽宽 / 每层缩进）集中在 `:root`，改版式只动那几个数。
 - **修掉「子项比父项偏左」的真因**：叶子行的 caret 用了 `hidden` 属性，而 `<button>[hidden]` 的 UA 规则会 `display: none` 把槽位吃掉 —— 父行有 caret、子行没有，dot 就错位。改成 `.is-leaf` 类（`visibility: hidden` + `pointer-events: none`，同时 `tabIndex=-1`/`aria-hidden`），**每一层都占同一个 caret 槽**。实测三层 dot 由 26 / 42 / 58 等距排开（每层 +16px，dot/label/caret 三者一致）。
+- **侧栏不再区分 tab / pane 两层**：一个 herdr tab = 一行「终端」（label 用该 tab 当前 pane 的标题、detail 用它的目录）——常见情况 1 tab 1 pane 不再多一层；只有多 pane 的 tab 才把 pane 挂出来。tab 行的 label 也据此改成 pane 标题（`tab 1` 退到右侧 context）。
+- **开新页签改成右键动作**：tab 行右键 → `在当前页签打开（切 herdr 到这个 tab，不新开）` / `为新页签开一个终端（钉在这个 tab）`；行内不再有「开」按钮（hover 只做「切过去」）。tab 行也需要自己的 target 类型，否则右键会落到 workspace 菜单上。
+- QA：新增「tab 行右键：在当前页签打开不新开 / 为新页签开终端才 +1」断言；fixture 建完 tab 要切回原 tab（新建 tab 会成为当前 tab，导致 `agent start` 的目标 pane 不再被渲染而失败）；`resetSession` 自愈（清残留 herdr server + 陈旧 socket，避免 `server_not_running` 连锁）；窗口被关掉时给出明确提示。
 - QA：新增「树缩进由层级算出（每层等距、叶子行占 caret 槽）」断言；离线预览注入一台锚定 workspace，`工作目录` 也进画面。
 
 ## 0.1.2

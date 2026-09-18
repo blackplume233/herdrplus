@@ -425,13 +425,11 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
     if (!isOpen) {
       continue;
     }
-    // 一个 herdr tab = 一行「终端」（label 用它的 pane 标题）—— 1 tab 1 pane 时不再多一层。
-    // 只有多 pane 的 tab 才把 pane 挂出来（要精确跳转/关闭某个 pane 时才需要）。
-    // 开新页签是**右键**动作（hover 只做「切过去」），免得列表里到处是「开」按钮。
+    // 一个 herdr tab = 一行「终端」；**只到这一层**（侧栏最多两层，三级折叠太深）。
+    // 多 pane 的 tab 用 detail 标出 `N pane`，要精确跳到某个 pane 就去下面的 Agents 块。
     for (const tab of current.tabs.filter((item) => item.workspace_id === workspace.workspace_id)) {
       const tabPanes = panes.filter((pane) => pane.tab_id === tab.tab_id);
       const active = tabPanes.find((pane) => pane.focused) ?? tabPanes[0];
-      const multi = tabPanes.length > 1;
       models.push({
         key: `tab:${tab.tab_id}`,
         depth: 1,
@@ -441,7 +439,7 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
         status: `dot status-${active?.agent_status ?? 'unknown'}`,
         statusTitle: STATUS_TEXT[active?.agent_status ?? 'unknown'] || '未知',
         label: active?.terminal_title_stripped ?? active?.title ?? `tab ${tab.label}`,
-        detail: multi ? `${tabPanes.length} pane` : shortPath(active?.foreground_cwd ?? active?.cwd ?? ''),
+        detail: tabPanes.length > 1 ? `${tabPanes.length} pane` : shortPath(active?.foreground_cwd ?? active?.cwd ?? ''),
         context: `tab ${tab.label}`,
         actions: [
           {
@@ -452,18 +450,13 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
           },
         ],
       });
-      if (multi) {
-        for (const pane of tabPanes) {
-          models.push(paneRow(current, pane, true));
-        }
-      }
     }
   }
   return models;
 }
 
-/** pane 行：workspace 的展开内容 / Agents 段的实体，两处共用同一套渲染。 */
-function paneRow(current: SessionSnapshot, pane: PaneInfo, child: boolean): RowModel {
+/** pane 行：Agents 块的实体（侧栏第二层以上的精确目标都在这里）。 */
+function paneRow(current: SessionSnapshot, pane: PaneInfo): RowModel {
   const currentIds = currentKeys();
   const agent = current.agents.find((item) => item.pane_id === pane.pane_id);
   const name = agentName(pane, agent);
@@ -471,20 +464,19 @@ function paneRow(current: SessionSnapshot, pane: PaneInfo, child: boolean): RowM
   const workspace = current.workspaces.find((item) => item.workspace_id === pane.workspace_id);
   const tab = current.tabs.find((item) => item.tab_id === pane.tab_id);
   const statusText = STATUS_TEXT[pane.agent_status];
-  const contextParts = child ? [`tab ${tab?.label ?? '?'}`] : [workspace?.label ?? pane.workspace_id];
-  if (!child && (workspace?.tab_count ?? 1) > 1) {
+  const contextParts = [workspace?.label ?? pane.workspace_id];
+  if ((workspace?.tab_count ?? 1) > 1) {
     contextParts.push(`tab ${tab?.label ?? '?'}`);
   }
   // 子行：label 已经是 agent 的终端标题，detail 就别再重复一遍 agent 名
-  const showsName = Boolean(name) && !title.startsWith(name);
   return {
     key: `pane:${pane.pane_id}`,
-    depth: child ? 2 : 0,
-    className: `row pane-row${child ? ' child' : ' agent-row'}${currentIds.includes(pane.pane_id) ? ' current' : ''}${pane.agent_status === 'blocked' ? ' blocked' : ''}`,
+    depth: 0,
+    className: `row pane-row agent-row${currentIds.includes(pane.pane_id) ? ' current' : ''}${pane.agent_status === 'blocked' ? ' blocked' : ''}`,
     status: `dot status-${pane.agent_status}`,
     statusTitle: statusText || '未知',
     label: title || name || pane.pane_id,
-    detail: child ? (showsName ? name : '') : statusText,
+    detail: statusText,
     context: contextParts.filter(Boolean).join(' · '),
     actions: [
       { act: 'focusPane', id: pane.pane_id, title: '在 herdr 终端里跳到这个 pane（终端视图会跟着切过去）', icon: 'terminal' },
@@ -518,7 +510,7 @@ function agentRows(current: SessionSnapshot): RowModel[] {
     }
     return workspaceNumber(left.workspace_id) - workspaceNumber(right.workspace_id) || left.pane_id.localeCompare(right.pane_id);
   });
-  return sorted.map((pane) => paneRow(current, pane, false));
+  return sorted.map((pane) => paneRow(current, pane));
 }
 
 function agentName(pane: PaneInfo, agent: AgentInfo | undefined): string {
