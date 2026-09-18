@@ -1,0 +1,9 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "build", "type": "shell", "command": "bun run build", "problemMatcher": [] },
+    { "label": "typecheck", "type": "shell", "command": "bun run typecheck", "problemMatcher": "$tsc" },
+    { "label": "qa", "type": "shell", "command": "bun run qa", "problemMatcher": [] },
+    { "label": "preview", "type": "shell", "command": "bun run preview", "problemMatcher": [] }
+  ]
+}

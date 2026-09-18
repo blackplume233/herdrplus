@@ -1,0 +1,433 @@
+:root {
+  --hp-row-height: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+}
+
+.banner {
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-left: 2px solid var(--vscode-charts-red);
+  background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.08));
+}
+
+.banner-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.banner-actions button {
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  padding: 2px 8px;
+}
+
+/* ── 基础控件（webview 里不重置的话 <button> 会带浏览器的默认底色） ──── */
+
+button {
+  font: inherit;
+  color: var(--vscode-icon-foreground);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+button:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.muted {
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+}
+
+.section-hint {
+  padding: 4px 10px 6px 20px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* ── 列表 ─────────────────────────────────────────────────────────────── */
+
+.list {
+  padding: 4px 0 8px;
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--hp-row-height);
+  padding: 0 6px 0 6px;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+/* 「终端正在显示这个 workspace」——侧栏里唯一的强标识 */
+.row.current {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.row.current::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--vscode-focusBorder, var(--vscode-charts-blue));
+}
+
+.row.current .label {
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  font-weight: 600;
+}
+
+.row.blocked .label {
+  font-weight: 600;
+}
+
+.row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent {
+  flex: 0 0 auto;
+  max-width: 44%;
+  text-align: right;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row.blocked .agent {
+  color: var(--vscode-charts-orange);
+}
+
+.row-actions {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  gap: 1px;
+  padding-left: 18px;
+  /* hover 底色是半透明的，直接用会把行内文字透出来 —— 渐变过渡到不透明的侧栏底色 */
+  background: linear-gradient(to right, transparent, var(--vscode-sideBar-background) 30%);
+}
+
+.row:hover .row-actions {
+  display: flex;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+}
+
+/* 状态色只上到小圆点：行本身不染色 */
+.dot.status-working {
+  background: var(--vscode-charts-blue);
+  opacity: 1;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-charts-blue) 25%, transparent);
+}
+
+.dot.status-blocked {
+  background: var(--vscode-charts-orange);
+  opacity: 1;
+  animation: hp-pulse 1.8s ease-in-out infinite;
+}
+
+.dot.status-done {
+  background: var(--vscode-charts-green);
+  opacity: 1;
+}
+
+.dot.status-idle {
+  background: var(--vscode-charts-purple);
+  opacity: 1;
+}
+
+.dot.status-unknown {
+  background: var(--vscode-descriptionForeground);
+  opacity: 0.35;
+}
+
+@keyframes hp-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--vscode-charts-orange) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-orange) 0%, transparent);
+  }
+}
+
+.empty {
+  padding: 16px 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.7;
+}
+
+.empty code {
+  background: var(--vscode-textCodeBlock-background);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+footer {
+  position: sticky;
+  bottom: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-sideBar-background);
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+}
+
+/* ── 行右键菜单 ───────────────────────────────────────────────────────── */
+
+.menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 168px;
+  padding: 4px 0;
+  border-radius: 5px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border, transparent));
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+
+.menu-title {
+  padding: 2px 10px 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 10px;
+  border-radius: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.menu-item .icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-menu-selectionForeground, inherit);
+}
+
+.menu-item.danger {
+  color: var(--vscode-charts-red);
+}
+
+/* [hidden] 在 UA 样式里只是 `display:none`，特异性会被 .icon-btn / .menu 这类类规则盖掉 —— 显式兜住 */
+[hidden] {
+  display: none !important;
+}
+
+/* 侧栏被拖窄时的降级：版本号先让位，再退掉排序文字 */
+@media (max-width: 250px) {
+  .head-row .muted {
+    display: none;
+  }
+}
+
+@media (max-width: 205px) {
+  .has-label .btn-label {
+    display: none;
+  }
+}
+
+/* ── 分节：VSCode 原生 view 标题在外面，这里只剩列表 ──────────────────── */
+
+.section {
+  padding-bottom: 4px;
+}
+
+/* agent 行：label 是「它在干什么」，右侧是所在 workspace · tab */
+.agent-row .label {
+  color: var(--vscode-foreground);
+}
+
+.agent-row .detail {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.pane-row .context {
+  flex: 0 0 auto;
+  max-width: 40%;
+  text-align: right;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-row.blocked .detail {
+  color: var(--vscode-charts-orange);
+}
+
+/* 可展开的 workspace 行 + 子 pane 行 */
+.row .caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--vscode-icon-foreground);
+  opacity: 0.75;
+}
+
+.row .caret svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.pane-row.child {
+  padding-left: 22px;
+}
+
+.pane-row.child .label {
+  font-size: 12px;
+  max-width: 60%;
+}
+
+.pane-row.child .detail {
+  flex: 0 0 auto;
+}
+
+.pane-row .context {
+  max-width: 38%;
+}
+
+/* ── 内联确认条（破坏性操作二次确认） ──────────────────────────────────── */
+
+.confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 204, 0, 0.15));
+  border-bottom: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-charts-orange));
+}
+
+.confirm-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  color: var(--vscode-charts-orange);
+}
+
+.confirm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.confirm-actions button {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  background: var(--vscode-button-secondaryBackground, var(--vscode-toolbar-hoverBackground));
+}
+
+.confirm-actions button.primary {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.confirm-actions button.primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}

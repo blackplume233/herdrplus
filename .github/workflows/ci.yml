@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build (extension host + webview)
+        run: bun run build
+
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --out herdrplus-ci.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: herdrplus-vsix
+          path: herdrplus-ci.vsix
+          if-no-files-found: error

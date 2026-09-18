@@ -1,0 +1,62 @@
+{
+  "protocol": 22,
+  "version": "0.9.1",
+  "focused_workspace_id": "wX",
+  "focused_tab_id": "wX:t1",
+  "focused_pane_id": "wX:p1",
+  "workspaces": [
+    { "workspace_id": "w3", "label": "black", "number": 1, "agent_status": "idle", "focused": false, "pane_count": 1, "tab_count": 1 },
+    { "workspace_id": "wX", "label": "vscodeext", "number": 3, "agent_status": "working", "focused": true, "pane_count": 2, "tab_count": 2 },
+    { "workspace_id": "wY", "label": "agentcraft", "number": 4, "agent_status": "done", "focused": false, "pane_count": 1, "tab_count": 3 }
+  ],
+  "tabs": [
+    { "tab_id": "w3:t1", "workspace_id": "w3", "label": "1", "pane_count": 1 },
+    { "tab_id": "wX:t1", "workspace_id": "wX", "label": "1", "pane_count": 1 },
+    { "tab_id": "wX:t2", "workspace_id": "wX", "label": "2", "pane_count": 1 },
+    { "tab_id": "wY:t1", "workspace_id": "wY", "label": "1", "pane_count": 1 }
+  ],
+  "panes": [
+    {
+      "pane_id": "w3:p1",
+      "workspace_id": "w3",
+      "tab_id": "w3:t1",
+      "cwd": "C:\\Users\\black",
+      "agent_status": "idle",
+      "focused": false,
+      "terminal_title_stripped": "π > 清理spec默认规范"
+    },
+    {
+      "pane_id": "wX:p1",
+      "workspace_id": "wX",
+      "tab_id": "wX:t1",
+      "cwd": "G:\\Workspace\\AgentWorkSpace\\HerdrPlus\\extension",
+      "agent_status": "working",
+      "focused": true,
+      "terminal_title_stripped": "π ⠧ VSCode插件设计方案"
+    },
+    {
+      "pane_id": "wX:p2",
+      "workspace_id": "wX",
+      "tab_id": "wX:t2",
+      "cwd": "G:\\Workspace\\AgentWorkSpace\\HerdrPlus\\extension",
+      "agent_status": "done",
+      "focused": false,
+      "terminal_title_stripped": "π > VSCode Agent 插件注入方案 review"
+    },
+    {
+      "pane_id": "wY:p1",
+      "workspace_id": "wY",
+      "tab_id": "wY:t1",
+      "cwd": "G:\\Workspace\\code\\agentcraft",
+      "agent_status": "blocked",
+      "focused": false,
+      "terminal_title_stripped": "π ⏸ 需要确认：是否删除 worktree"
+    }
+  ],
+  "agents": [
+    { "pane_id": "w3:p1", "workspace_id": "w3", "tab_id": "w3:t1", "agent_status": "idle", "name": "pi", "display_agent": "π" },
+    { "pane_id": "wX:p1", "workspace_id": "wX", "tab_id": "wX:t1", "agent_status": "working", "name": "pi-2", "display_agent": "π" },
+    { "pane_id": "wX:p2", "workspace_id": "wX", "tab_id": "wX:t2", "agent_status": "done", "name": "pi-3", "display_agent": "π" },
+    { "pane_id": "wY:p1", "workspace_id": "wY", "tab_id": "wY:t1", "agent_status": "blocked", "name": "pi-4", "display_agent": "π" }
+  ]
+}

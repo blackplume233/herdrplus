@@ -1,0 +1,342 @@
+{
+  "name": "herdrplus",
+  "displayName": "HerdrPlus",
+  "description": "VSCode 观感的 herdr 终端工作台：侧栏看 workspace/agent，中间区跑 herdr 终端，终端 tab 右键起 Agent",
+  "icon": "media/icon.png",
+  "keywords": [
+    "herdr",
+    "terminal",
+    "agent",
+    "workspace",
+    "tui",
+    "conpty",
+    "xterm"
+  ],
+  "version": "0.1.0",
+  "publisher": "herdrplus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/blackplume233/herdrplus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blackplume233/herdrplus/issues"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "herdrplus-container",
+          "title": "Herdr",
+          "icon": "media/herdr.svg",
+          "when": "herdrplus.noSecondarySidebar"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "herdrplus-containerSecondary",
+          "title": "Herdr",
+          "icon": "media/herdr.svg",
+          "when": "!herdrplus.noSecondarySidebar"
+        }
+      ]
+    },
+    "views": {
+      "herdrplus-container": [
+        {
+          "id": "herdrplus.sidebar",
+          "type": "webview",
+          "name": "Workspaces",
+          "when": "herdrplus.noSecondarySidebar"
+        },
+        {
+          "id": "herdrplus.sidebarAgents",
+          "type": "webview",
+          "name": "Agents",
+          "when": "herdrplus.noSecondarySidebar"
+        }
+      ],
+      "herdrplus-containerSecondary": [
+        {
+          "id": "herdrplus.sidebarSecondary",
+          "type": "webview",
+          "name": "Workspaces",
+          "when": "!herdrplus.noSecondarySidebar"
+        },
+        {
+          "id": "herdrplus.sidebarAgentsSecondary",
+          "type": "webview",
+          "name": "Agents",
+          "when": "!herdrplus.noSecondarySidebar"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "herdrplus.sidebar",
+        "contents": "未检测到 herdr。\nHerdrPlus 不会替你下载安装，只负责找到并驱动它。\n[定位 herdr](command:herdrplus.locate)\n[安装说明（herdr.dev）](command:herdrplus.installDocs)"
+      },
+      {
+        "view": "herdrplus.sidebarSecondary",
+        "contents": "未检测到 herdr。\nHerdrPlus 不会替你下载安装，只负责找到并驱动它。\n[定位 herdr](command:herdrplus.locate)\n[安装说明（herdr.dev）](command:herdrplus.installDocs)"
+      },
+      {
+        "view": "herdrplus.sidebarAgents",
+        "contents": "没有检测到 agent。\n[启动 Agent（新终端）](command:herdrplus.startAgent)"
+      },
+      {
+        "view": "herdrplus.sidebarAgentsSecondary",
+        "contents": "没有检测到 agent。\n[启动 Agent（新终端）](command:herdrplus.startAgent)"
+      }
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "herdr",
+          "title": "herdr",
+          "icon": "media/herdr.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "herdrplus.refresh",
+        "title": "刷新",
+        "category": "Herdr",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "herdrplus.newWorkspace",
+        "title": "新建 Workspace",
+        "category": "Herdr",
+        "icon": "$(add)"
+      },
+      {
+        "command": "herdrplus.openClient",
+        "title": "打开 herdr 终端",
+        "category": "Herdr",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "herdrplus.startAgent",
+        "title": "启动 Agent（新终端）",
+        "category": "Herdr"
+      },
+      {
+        "command": "herdrplus.startAgentHere",
+        "title": "启动 Agent（当前 Pane）",
+        "category": "Herdr"
+      },
+      {
+        "command": "herdrplus.previewPane",
+        "title": "预览 Pane 输出",
+        "category": "Herdr",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "herdrplus.locate",
+        "title": "定位/检查 herdr",
+        "category": "Herdr"
+      },
+      {
+        "command": "herdrplus.openFloating",
+        "title": "在浮动侧栏中打开",
+        "category": "Herdr"
+      },
+      {
+        "command": "herdrplus.doctor",
+        "title": "诊断（写报告文件）",
+        "category": "Herdr"
+      },
+      {
+        "command": "herdrplus.newTerminal",
+        "title": "新开 herdr 终端视图",
+        "category": "Herdr"
+      },
+      {
+        "command": "herdrplus.sort",
+        "title": "切换排序（序号 / 待处理）",
+        "category": "Herdr",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "herdrplus.sweepWorkspaces",
+        "title": "归档关闭（空闲 workspace）",
+        "category": "Herdr",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "herdrplus.installDocs",
+        "title": "安装 herdr（打开官方说明）",
+        "category": "Herdr",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "herdrplus.previewPaneBeside",
+        "title": "预览 Pane 输出（新栏）",
+        "category": "Herdr",
+        "icon": "$(split-horizontal)"
+      }
+    ],
+    "menus": {
+      "editor/title/context": [
+        {
+          "command": "herdrplus.previewPane",
+          "group": "herdr@3",
+          "when": "resourceScheme == 'vscode-terminal'"
+        },
+        {
+          "command": "herdrplus.startAgent",
+          "group": "herdr@1",
+          "when": "resourceScheme == 'vscode-terminal'"
+        },
+        {
+          "command": "herdrplus.previewPaneBeside",
+          "when": "resourceScheme == 'vscode-terminal'",
+          "group": "herdrplus@2"
+        }
+      ],
+      "terminal/title/context": [
+        {
+          "command": "herdrplus.startAgent",
+          "group": "herdr@1"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "herdrplus.startAgent",
+          "when": "terminalFocus",
+          "group": "herdr@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "herdrplus.sort",
+          "when": "view == herdrplus.sidebar || view == herdrplus.sidebarSecondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "herdrplus.newWorkspace",
+          "when": "view == herdrplus.sidebar || view == herdrplus.sidebarSecondary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "herdrplus.openClient",
+          "when": "view == herdrplus.sidebar || view == herdrplus.sidebarSecondary",
+          "group": "navigation@3"
+        },
+        {
+          "command": "herdrplus.sweepWorkspaces",
+          "when": "view == herdrplus.sidebar || view == herdrplus.sidebarSecondary",
+          "group": "navigation@4"
+        },
+        {
+          "command": "herdrplus.refresh",
+          "when": "view == herdrplus.sidebar || view == herdrplus.sidebarSecondary",
+          "group": "navigation@5"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "HerdrPlus",
+      "properties": {
+        "herdrplus.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "herdr 可执行文件路径。留空则自动探测（where herdr / 常见安装目录）。"
+        },
+        "herdrplus.socketPath": {
+          "type": "string",
+          "default": "",
+          "description": "herdr socket API 端点。留空 = %APPDATA%\\herdr\\herdr.sock。"
+        },
+        "herdrplus.agents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "pi",
+            "omp"
+          ],
+          "description": "右键菜单中可启动的 agent kind（对应 herdr agent start --kind 的取值）。"
+        },
+        "herdrplus.openIn": {
+          "type": "string",
+          "enum": [
+            "editor",
+            "panel"
+          ],
+          "default": "editor",
+          "description": "herdr 终端打开位置：编辑器区（对齐 VSCode 观感）或底部面板。"
+        },
+        "herdrplus.useCliFallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "socket API 不可用时回退到 herdr CLI 轮询快照。"
+        },
+        "herdrplus.herdrConfigPath": {
+          "type": "string",
+          "default": "",
+          "description": "高级：直接指定内嵌终端使用的 herdr 配置路径（留空则自动生成，内容 = 你的 config.toml + 隐藏侧栏覆盖）。"
+        },
+        "herdrplus.bareTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "内嵌终端只显示终端内容：隐藏 herdr 自带侧栏、单 tab 时的 tab 行与外框（导航交给 VSCode 侧栏，分栏交给 VSCode 的 tab/split）。"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "herdrplus.openClient",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h"
+      },
+      {
+        "command": "herdrplus.openFloating",
+        "key": "ctrl+alt+shift+h",
+        "mac": "cmd+alt+shift+h"
+      },
+      {
+        "command": "herdrplus.startAgent",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
+      },
+      {
+        "command": "herdrplus.newWorkspace",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      },
+      {
+        "command": "herdrplus.previewPane",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "dev": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "node esbuild.mjs",
+    "launch": "node src/test/agent/launch.mjs",
+    "qa": "node src/test/agent/verify.mjs",
+    "preview": "node scripts/preview-sidebar.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.100.0",
+    "esbuild": "^0.24.0",
+    "playwright-core": "^1.49.0",
+    "typescript": "^5.7.0"
+  }
+}

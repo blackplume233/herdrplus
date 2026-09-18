@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.vsix
+reports/
+
+# 构建产物（bun run build / vscode:prepublish 生成）
+media/sidebar.js
+media/sidebar.js.map
+media/style.css
+media/style.css.map
