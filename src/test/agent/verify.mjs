@@ -525,10 +525,29 @@ async function main() {
   );
   // 真正的 chrome 标记：tab 行的「tab N」与它的 switch 按钮（侧栏收起后零宽，读不到文本）。
   // 不用通用词表（prefix/spaces 之类）—— 那会把 herdr 的说明文字一起判红。
+  const chromeFree = !/\btab \d+\b|\bswitch\b/i.test(alphaText.slice(0, 600));
+  // 失败时把目标机 herdr 客户端日志里跟 config 有关的行带出来：这条断言在 CI 上偶发（同为 0.9.1、
+  // 同一份配置、规范路径），只看终端文本永远不知道 herdr 为什么没读我们的配置。
+  let configLog = '';
+  if (!chromeFree) {
+    try {
+      const logPath = join(process.env.APPDATA ?? '', 'herdr', 'herdr-client.log');
+      configLog =
+        ' ｜client.log: ' +
+        (readFileSync(logPath, 'utf8')
+          .split(/\r?\n/)
+          .filter((line) => /config/i.test(line))
+          .slice(-3)
+          .map((line) => line.trim().slice(-150))
+          .join(' ⏎ ') || '（无 config 相关行）');
+    } catch {
+      configLog = ' ｜client.log: 读不到';
+    }
+  }
   record(
     '内嵌终端无 herdr chrome（无 tab 行/侧栏）',
-    !/\btab \d+\b|\bswitch\b/i.test(alphaText.slice(0, 600)),
-    alphaText.slice(0, 160),
+    chromeFree,
+    alphaText.slice(0, 160) + configLog,
   );
 
   // 6) 终端 tab 右键菜单（resourceScheme == 'vscode-terminal'）
