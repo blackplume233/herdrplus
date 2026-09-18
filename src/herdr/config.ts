@@ -10,20 +10,24 @@ import * as path from 'node:path';
  *   sidebar_collapsed_mode = "hidden"  # 收起即零宽（compact 会留一条窄状态轨）
  *   hide_tab_bar_when_single_tab = true# 单 tab 不画 tab 行
  *   pane_outer_borders = false         # 不画 pane 外框（单 pane 时就是纯终端）
+ * 顶层 `onboarding = false`：全新机器上 herdr 会弹首启引导（带它的侧栏/tab 行与说明文字），
+ * 那会破坏「内嵌终端是 bare」的承诺 —— 引导留给用户在真终端里跑 herdr 时看。
  * 通过 HERDR_CONFIG_PATH 指向生成文件生效——因此这里需要把用户原配置一起带过去（该变量是覆盖而非叠加）。
  */
 
-const OVERRIDES: Record<string, string[]> = {
-  '[ui]': [
+/** 空字符串 key = 顶层键（插在任何 `[section]` 之前）。 */
+const OVERRIDES: Array<[string, string[]]> = [
+  ['', ['onboarding = false']],
+  ['[ui]', [
     'sidebar_start_collapsed = true',
     'sidebar_collapsed_mode = "hidden"',
     'hide_tab_bar_when_single_tab = true',
     'pane_outer_borders = false',
-  ],
+  ]],
   // 扩展拉起的终端本身可能就在 herdr pane 里（在 herdr 里开 VS Code）——不放开这条，
   // herdr 会以 "nested herdr is disabled by default" 立刻退出，终端开完即消失。
-  '[experimental]': ['allow_nested = true'],
-};
+  ['[experimental]', ['allow_nested = true']],
+];
 const GENERATED_HEADER = '# 由 HerdrPlus 生成：内嵌终端只显示终端内容（无 herdr 侧栏/tab 行/外框）。原配置内容见下方。\n';
 
 export function userConfigPath(): string {
@@ -38,7 +42,26 @@ export function userConfigPath(): string {
 export function mergeOverrides(source: string): string {
   let lines = source.length > 0 ? source.split(/\r?\n/) : [];
 
-  for (const [section, keys] of Object.entries(OVERRIDES)) {
+  for (const [section, keys] of OVERRIDES) {
+    if (section === '') {
+      // 顶层键：只在第一个 [section] 之前找同名键，替换或插入
+      const firstSection = lines.findIndex((line) => /^\s*\[/.test(line));
+      const boundary = firstSection < 0 ? lines.length : firstSection;
+      const present = new Set(
+        lines
+          .slice(0, boundary)
+          .map((line) => line.split('=')[0]?.trim())
+          .filter((key): key is string => Boolean(key)),
+      );
+      const missing = keys.filter((key) => !present.has(key.split('=')[0].trim()));
+      const patched = lines.slice(0, boundary).map((line) => {
+        const key = line.split('=')[0]?.trim();
+        return keys.find((candidate) => candidate.split('=')[0].trim() === key) ?? line;
+      });
+      lines = [...patched, ...missing, ...lines.slice(boundary)];
+      continue;
+    }
+
     const start = lines.findIndex((line) => line.trim() === section);
     if (start < 0) {
       const body = lines.join('\n').replace(/\s*$/, '');

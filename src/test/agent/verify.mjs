@@ -359,7 +359,7 @@ async function main() {
     const emptyState = await waitForSidebar((text) => /protocol/.test(text), 15_000);
     record(
       '无 agent 时给出空态提示',
-      /没有检测到 agent/.test(emptyState) && /protocol/.test(emptyState),
+      /没有检测到 agent|还没有 agent/.test(emptyState) && /protocol/.test(emptyState),
       emptyState.replace(/\s+/g, ' ').slice(-120),
     );
   }
@@ -368,8 +368,9 @@ async function main() {
   const tomlPath = join(userDataDir, 'User', 'globalStorage', 'herdrplus.herdrplus', 'herdr-config.toml');
   const toml = existsSync(tomlPath) ? readFileSync(tomlPath, 'utf8') : '';
   record(
-    '生成 bare 终端配置（4 项覆盖齐全）',
-    /sidebar_start_collapsed = true/.test(toml) &&
+    '生成 bare 终端配置（5 项覆盖齐全，含首启引导关闭）',
+    /onboarding = false/.test(toml) &&
+      /sidebar_start_collapsed = true/.test(toml) &&
       /sidebar_collapsed_mode = "hidden"/.test(toml) &&
       /hide_tab_bar_when_single_tab = true/.test(toml) &&
       /pane_outer_borders = false/.test(toml),
@@ -463,9 +464,11 @@ async function main() {
     /MARKER-ALPHA-OK/.test(alphaText) && /MARKER-FOCUS-OK/.test(focusText),
     `alpha 视图含 ALPHA=${/MARKER-ALPHA-OK/.test(alphaText)}，切换后含 FOCUS=${/MARKER-FOCUS-OK/.test(focusText)}`,
   );
+  // 真正的 chrome 标记：tab 行的「tab N」与它的 switch 按钮（侧栏收起后零宽，读不到文本）。
+  // 不用通用词表（prefix/spaces 之类）—— 那会把 herdr 的说明文字一起判红。
   record(
     '内嵌终端无 herdr chrome（无 tab 行/侧栏）',
-    !/prefix|navigate|spaces/i.test(alphaText.slice(0, 400)),
+    !/\btab \d+\b|\bswitch\b/i.test(alphaText.slice(0, 600)),
     alphaText.slice(0, 160),
   );
 

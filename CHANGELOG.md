@@ -10,7 +10,7 @@
 - **安全关闭**：workspace 行 hover `✕` 关闭（只关容器不删目录）；里面有没结束的 agent 时**先在侧栏出确认条**，Esc 取消、Enter 确认。
 - **关 pane 也要确认**：pane 行右键 `关闭 pane`（会结束进程）同样走确认条，文案会写明里面是哪个 agent、什么状态。
 - **归档关闭**：一次关掉所有「空闲/完成且非当前」的 workspace，确认条列出清单与「其中 M 个还有没结束的 agent」。
-- **内嵌终端**：`herdr` 跑在 VSCode 终端里（bare：无侧栏 / 无单 tab 行 / 无 pane 外框），侧栏点击即切视图；`Ctrl+Alt+H` 聚焦。
+- **内嵌终端**：`herdr` 跑在 VSCode 终端里（bare：无侧栏 / 无单 tab 行 / 无 pane 外框 / 关掉首启引导），侧栏点击即切视图；`Ctrl+Alt+H` 聚焦。
 - **每个终端不再都一样**：
   - 钉住终端（`新开 herdr 终端视图` → 选 workspace，或行右键「新开终端并钉在这个 workspace」）：切标签即切服务端焦点。
   - 绑定另一个 session（`session: <name>`）：独立 server 与焦点 → **两个终端可同时显示不同内容且都可交互**。

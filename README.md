@@ -127,17 +127,22 @@ npx @vscode/vsce package --no-dependencies --allow-missing-repository
 
 ## 内嵌终端为什么是 bare 的
 
-导航已经在 VSCode 侧栏里、分栏已经是 VSCode 的 tab/split，终端里再画 herdr 自己的侧栏 / tab 行 / 外框就是重复。herdr 没有启动期开关，只有 `[ui]` 配置项：
+导航已经在 VSCode 侧栏里、分栏已经是 VSCode 的 tab/split，终端里再画 herdr 自己的侧栏 / tab 行 / 外框就是重复。herdr 没有启动期开关，只能靠配置项：
 
 ```toml
+onboarding = false                   # 关掉首启引导（全新机器上它会盖在终端里，还自带说明文字）
 [ui]
 sidebar_start_collapsed = true       # 启动即收起侧栏
 sidebar_collapsed_mode = "hidden"    # 收起即零宽（compact 会留一条窄状态轨）
 hide_tab_bar_when_single_tab = true  # 单 tab 不画 tab 行
 pane_outer_borders = false           # 不画 pane 外框
+[experimental]
+allow_nested = true                  # 允许「在 herdr pane 里开 VS Code」这种嵌套（否则终端开完即消失）
 ```
 
-扩展在激活时把你的 `config.toml` 内容 + 上面四条覆盖，写到扩展的 globalStorage（`herdr-config.toml`），
+（这五条 + `allow_nested` 都用 `herdr config check` 校验过：`config: ok`。）
+
+扩展在激活时把你的 `config.toml` 内容 + 上面这些覆盖，写到扩展的 globalStorage（`herdr-config.toml`），
 再用 `HERDR_CONFIG_PATH` 只对**扩展拉起的终端**生效 —— 不改你的全局配置。
 （`HERDR_CONFIG_PATH` 是覆盖而非叠加，所以必须先把你原配置一起带过去。）
 
