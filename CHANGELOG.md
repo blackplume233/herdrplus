@@ -1,6 +1,19 @@
 # Changelog
 
+## 0.1.1
+
+- **移除只读预览（pane 看板）**：它是文本重放、渲染不准，不如直接开终端。相关命令、菜单项、快捷键 `Ctrl+Alt+P`、`pane.read` 调用一并删除（`herdrplus.previewPane` / `previewPaneBeside` 不再存在）。
+- **侧栏变成 workspace → tab → pane 三层**：一个 herdr tab 一行（可点，点了切服务端当前 tab），它的 pane 挂在下面；子项缩进逐级向右，不再出现「子项比父项更靠左」。
+- **一个 herdr tab ↔ 一个 VSCode 终端页签**：新增 `为每个 tab 各开一个终端页签`（workspace 右键），每个页签钉在 (workspace, tab) 上，**激活哪个页签就把 herdr 的当前 tab 切到它**。
+- 新增 `Herdr: 在当前 workspace 新开一个终端`（一键，不用选目标），终端 tab 右键也有。
+- workspace 行 hover 的第二个动作从「预览」换成「**新开终端并钉在这个 workspace**」——终端优先。
+- **选择即精准**：点 workspace / tab / pane 行时，除了切 herdr 焦点，还会**精确亮出该行对应的那一个终端**（`show(preserveFocus)` 不抢侧栏焦点）；不会再出现「点了 A 却亮了别处」。
+- **终端工作目录准确**：从某个 workspace（或某个 tab）开终端时，终端进程的 cwd = 该 workspace/tab 当前 pane 的目录（目录不存在时退回 VSCode 默认，不弹警告）。
+- 内嵌终端配置补 `onboarding = false`：全新机器上不再弹 herdr 首启引导（它自带说明文字与 tab 行，破坏「终端是 bare」的承诺）。
+- QA：39 → 44 条断言；新增「没有 agent CLI 的环境明确 SKIP 而不是假红」、webview JS 异常回传并断言、关 pane 确认条的取消用例。
+
 ## 0.1.0
+
 
 首个可用版本：把 herdr 变成 VSCode 里的工作台（扩展只做外骨骼，herdr 仍是真 TUI）。
 

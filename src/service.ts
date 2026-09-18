@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { promisify } from 'node:util';
 import * as path from 'node:path';
@@ -30,6 +31,7 @@ const KNOWN_AGENT_KINDS = [
 type IncomingMessage =
   | { type: 'ready' }
   | { type: 'focus'; kind: 'workspace' | 'tab' | 'pane'; id: string }
+  | { type: 'webview-error'; message: string }
   | { type: 'action'; action: string; id?: string };
 
 export interface AgentStartOptions {
@@ -45,10 +47,8 @@ export class HerdrService implements vscode.Disposable {
   private readonly posts = new Set<(message: unknown) => void>();
   private readonly herdrTerminals: vscode.Terminal[] = [];
   private readonly closedTerminals = new Set<vscode.Terminal>();
-  /** 内嵌终端 → 钉住的 workspace（没有则跟随服务端焦点）。 */
-  private readonly pinnedTerminals = new Map<vscode.Terminal, string>();
-  /** 每个 pane 一个只读看板面板（可以并排开多个，同时盯多个 agent）。 */
-  private readonly previews = new Map<string, { panel: vscode.WebviewPanel; timer: NodeJS.Timeout }>();
+  /** 内嵌终端 → 钉住的目标（workspace，可选 tab）；没有则跟随服务端焦点。 */
+  private readonly pinnedTerminals = new Map<vscode.Terminal, { workspaceId: string; tabId?: string }>();
 
   selectedWorkspaceId?: string;
 
@@ -119,7 +119,6 @@ export class HerdrService implements vscode.Disposable {
       this.onSnapshotCallback(snapshot);
       this.post({ type: 'snapshot', snapshot });
       this.updateViewDescriptions();
-      this.refreshPreviewTitles();
     };
     client.onEvent = (event) => {
       this.onEventCallback(event);
@@ -340,6 +339,9 @@ export class HerdrService implements vscode.Disposable {
         }
         await this.focus(message.kind, message.id);
         return;
+      case 'webview-error':
+        this.traceAdd(`webview error: ${message.message}`);
+        return;
       case 'action':
         await this.handleAction(message.action, message.id);
         return;
@@ -358,13 +360,6 @@ export class HerdrService implements vscode.Disposable {
         return this.startAgent({ mode: 'newTerminal' });
       case 'startAgentHere':
         return this.startAgent({ mode: 'here', paneId: id });
-      case 'preview':
-      case 'previewPaneAction':
-        return this.previewPane(id);
-      case 'previewPaneBeside':
-        return this.previewPane(id, { beside: true });
-      case 'previewWorkspace':
-        return this.previewPane(this.activePaneId(id));
       case 'focusPane':
         if (id) {
           await this.focus('pane', id);
@@ -382,6 +377,20 @@ export class HerdrService implements vscode.Disposable {
         return;
       case 'openClient':
         return this.openClient();
+      case 'openTerminalForTab': {
+        const tab = this.snapshot?.tabs.find((item) => item.tab_id === id);
+        if (tab) {
+          this.openClient({ fresh: true, target: tab.workspace_id, tab: tab.tab_id });
+          await this.focus('workspace', tab.workspace_id);
+          await this.focus('tab', tab.tab_id);
+        }
+        return;
+      }
+      case 'openTabTerminals':
+        if (id) {
+          await this.openTabTerminals(id);
+        }
+        return;
       case 'openTerminalPinned':
         if (id) {
           this.openClient({ fresh: true, target: id });
@@ -410,20 +419,7 @@ export class HerdrService implements vscode.Disposable {
   }
 
   /** workspace 当前活跃的 pane（侧栏是单层列表，行内动作需要落到具体 pane）。 */
-  private activePaneId(workspaceId?: string): string | undefined {
-    if (!workspaceId || !this.snapshot) {
-      return undefined;
-    }
-    const workspace = this.snapshot.workspaces.find((item) => item.workspace_id === workspaceId);
-    const panes = this.snapshot.panes.filter((pane) => pane.workspace_id === workspaceId);
-    const tabId = workspace?.active_tab_id;
-    return (
-      panes.find((pane) => pane.tab_id === tabId && pane.focused)?.pane_id ??
-      panes.find((pane) => pane.tab_id === tabId)?.pane_id ??
-      panes.find((pane) => pane.focused)?.pane_id ??
-      panes[0]?.pane_id
-    );
-  }
+
 
   async refresh(): Promise<void> {
     await this.client.refresh();
@@ -434,6 +430,52 @@ export class HerdrService implements vscode.Disposable {
     const method = kind === 'workspace' ? 'workspace.focus' : kind === 'tab' ? 'tab.focus' : 'pane.focus';
     const key = kind === 'workspace' ? 'workspace_id' : kind === 'tab' ? 'tab_id' : 'pane_id';
     await this.run(() => this.client.request(method, { [key]: id }));
+    // 选中哪一行，就把**对应该行的那一个终端**精确地亮出来（不抢侧栏焦点，用户继续在侧栏里点）。
+    this.revealTerminalFor(kind, id);
+  }
+
+  /**
+   * 把「这一行对应的终端」亮出来：
+   * workspace → 钉在该 workspace 的终端（或跟随焦点的那个）
+   * tab       → 钉在 (workspace, tab) 的终端
+   * pane      → 它所属 tab 的终端（pane 跟着 tab 走）
+   * 用 `show(true)` 保焦点，避免每点一行就把焦点从侧栏抢走。
+   */
+  private revealTerminalFor(kind: 'workspace' | 'tab' | 'pane', id: string): void {
+    const snapshot = this.snapshot;
+    let workspaceId: string | undefined;
+    let tabId: string | undefined;
+    if (kind === 'workspace') {
+      workspaceId = id;
+    } else if (kind === 'tab') {
+      const tab = snapshot?.tabs.find((item) => item.tab_id === id);
+      workspaceId = tab?.workspace_id;
+      tabId = id;
+    } else {
+      const pane = snapshot?.panes.find((item) => item.pane_id === id);
+      workspaceId = pane?.workspace_id;
+      tabId = pane?.tab_id;
+    }
+    if (!workspaceId) {
+      return;
+    }
+    const alive = (terminal: vscode.Terminal): boolean => !this.closedTerminals.has(terminal);
+    const pinned = this.herdrTerminals.filter((terminal) => {
+      if (!alive(terminal)) {
+        return false;
+      }
+      const pin = this.pinnedTerminals.get(terminal);
+      if (!pin || pin.workspaceId !== workspaceId) {
+        return false;
+      }
+      return tabId ? pin.tabId === tabId : true;
+    });
+    const fallback = this.herdrTerminals.find((terminal) => alive(terminal) && !this.pinnedTerminals.has(terminal));
+    const terminal = pinned[pinned.length - 1] ?? fallback;
+    if (terminal) {
+      this.traceAdd(`reveal: ${kind} ${id} → ${terminal.name}`);
+      terminal.show(true);
+    }
   }
 
   async newWorkspace(): Promise<void> {
@@ -605,65 +647,10 @@ export class HerdrService implements vscode.Disposable {
     });
   }
 
-  /**
-   * 预览某个 pane 的输出。默认开在**当前编辑器栏**（一个 tab，不打乱布局）；
-   * `beside` 才另开新栏 —— 想并排盯多个就对新栏那个用 `previewPaneBeside`。
-   */
-  async previewPane(paneId?: string, options: { beside?: boolean } = {}): Promise<void> {
-    const target = paneId ?? this.snapshot?.focused_pane_id;
-    if (!target) {
-      void vscode.window.showWarningMessage('HerdrPlus：先在侧栏选中一个 pane（或让 herdr 聚焦一个 pane）。');
-      return;
-    }
-    const existing = this.previews.get(target);
-    if (existing) {
-      // 已有这个 pane 的看板：就地露出（在当前栏打开的不因再点一次而跳栏）
-      existing.panel.reveal(options.beside ? vscode.ViewColumn.Beside : undefined, true);
-      await this.renderPreview(target);
-      return;
-    }
-    const column = options.beside ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
-    const panel = vscode.window.createWebviewPanel('herdrplus.preview', `herdr: ${this.paneLabel(target)}`, column, {});
-    const timer = setInterval(() => {
-      if (panel.visible) {
-        void this.renderPreview(target);
-      }
-    }, 2_000);
-    this.previews.set(target, { panel, timer });
-    panel.onDidDispose(() => {
-      clearInterval(timer);
-      this.previews.delete(target);
-    });
-    await this.renderPreview(target);
-  }
-
-  /** pane 的人类可读名（终端标题优先），用于面板标题。 */
+  /** pane 的人类可读名（终端标题优先），用于确认条文案。 */
   private paneLabel(paneId: string): string {
     const pane = this.snapshot?.panes.find((item) => item.pane_id === paneId);
     return pane?.terminal_title_stripped ?? pane?.title ?? paneId;
-  }
-
-  /** 每次快照后刷新看板标题（pane 标题会随 agent 干活变化）。 */
-  private refreshPreviewTitles(): void {
-    for (const [paneId, entry] of this.previews) {
-      const label = `herdr: ${this.paneLabel(paneId)}`;
-      if (entry.panel.title !== label) {
-        entry.panel.title = label;
-      }
-    }
-  }
-
-  private async renderPreview(paneId: string): Promise<void> {
-    const panel = this.previews.get(paneId)?.panel;
-    if (!panel) {
-      return;
-    }
-    try {
-      panel.webview.html = previewHtml(paneId, await this.client.readPane(paneId, 120));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      panel.webview.html = previewHtml(paneId, `读取失败：${message}`);
-    }
   }
 
   /**
@@ -672,10 +659,10 @@ export class HerdrService implements vscode.Disposable {
    * 所以钉住 = 它被激活时自动 `workspace.focus`；想**同时**看不同内容就绑定另一个 session
    * （每个 session 有独立 server 与独立焦点）。
    */
-  openClient(options: { fresh?: boolean; target?: string; session?: string } = {}): void {
+  openClient(options: { fresh?: boolean; target?: string; tab?: string; session?: string; show?: boolean } = {}): void {
     const herdr = this.herdrPath;
     this.traceAdd(
-      `openClient: herdr=${herdr ?? 'none'} cfg=${this.effectiveConfigPath ?? 'none'} fresh=${options.fresh === true} target=${options.target ?? '-'} session=${options.session ?? '-'}`,
+      `openClient: herdr=${herdr ?? 'none'} cfg=${this.effectiveConfigPath ?? 'none'} fresh=${options.fresh === true} target=${options.target ?? '-'} tab=${options.tab ?? '-'} session=${options.session ?? '-'} cwd=${this.terminalCwdFor(options.target, options.tab) ?? '-'}`,
     );
     if (!herdr) {
       void this.locateCommand();
@@ -691,27 +678,35 @@ export class HerdrService implements vscode.Disposable {
         return;
       }
     }
-    this.spawnTerminal({ herdr, target: options.target, session: options.session });
+    this.spawnTerminal({ herdr, target: options.target, tab: options.tab, session: options.session, show: options.show });
   }
 
   /** 真正创建终端（含「启动后立刻退出」的警报）。 */
-  private spawnTerminal(options: { herdr: string; target?: string; session?: string }): void {
+  private spawnTerminal(options: { herdr: string; target?: string; tab?: string; session?: string; show?: boolean }): void {
+    // 从哪个 workspace/tab 开终端，就在它的目录里起：否则 TUI 的启动 cwd 会落在 VSCode 默认目录。
+    const cwd = this.terminalCwdFor(options.target, options.tab);
     const location =
       vscode.workspace.getConfiguration('herdrplus').get<string>('openIn') === 'panel'
         ? vscode.TerminalLocation.Panel
         : vscode.TerminalLocation.Editor;
-    const suffix = options.session ? ` @${options.session}` : options.target ? `: ${this.workspaceLabel(options.target)}` : '';
+    const tabLabel = options.tab ? this.tabLabel(options.tab) : undefined;
+    const suffix = options.session
+      ? ` @${options.session}`
+      : options.target
+        ? `: ${this.workspaceLabel(options.target)}${tabLabel ? ` · ${tabLabel}` : ''}`
+        : '';
     const terminal = vscode.window.createTerminal({
       name: `herdr${suffix}`,
       shellPath: options.herdr,
       shellArgs: options.session ? ['--session', options.session] : [],
       location,
+      ...(cwd ? { cwd } : {}),
       iconPath: new vscode.ThemeIcon('terminal'),
       env: this.terminalEnv({ session: options.session }),
     });
     this.herdrTerminals.push(terminal);
     if (options.target) {
-      this.pinnedTerminals.set(terminal, options.target);
+      this.pinnedTerminals.set(terminal, { workspaceId: options.target, tabId: options.tab });
     }
     const startedAt = Date.now();
     const subscription = vscode.window.onDidCloseTerminal((closed) => {
@@ -735,7 +730,9 @@ export class HerdrService implements vscode.Disposable {
       }
     });
     this.disposables.push(subscription);
-    terminal.show();
+    if (options.show !== false) {
+      terminal.show();
+    }
   }
 
   /** 别的 session 的终端：各 session 有各自的 server 与「当前 workspace」，所以能同时显示不同内容。 */
@@ -784,9 +781,18 @@ export class HerdrService implements vscode.Disposable {
     }
   }
 
-  /** 另开一个 herdr 终端视图（同一个 server 的第二个 client）。 */
+  /** 另开一个 herdr 终端视图（同一个 server 的第二个 client），跟随焦点。 */
   newTerminal(): void {
     this.openClient({ fresh: true });
+  }
+
+  /** 在当前 workspace 上另开一个终端（不用选：目标就是服务端当前 focus 的 workspace）。 */
+  async newTerminalHere(): Promise<void> {
+    const target = this.snapshot?.focused_workspace_id ?? undefined;
+    this.openClient({ fresh: true, target });
+    if (target) {
+      await this.focus('workspace', target);
+    }
   }
 
   /**
@@ -824,6 +830,53 @@ export class HerdrService implements vscode.Disposable {
     }
   }
 
+  /**
+   * 终端的工作目录：目标 workspace（或 tab）里「当前 pane 的前台目录」优先，退回它的 cwd。
+   * 目录已不存在（被删/UNC）就不传，交给 VSCode 默认，免得起终端时报「目录不存在」。
+   */
+  private terminalCwdFor(workspaceId?: string, tabId?: string): string | undefined {
+    if (!workspaceId) {
+      return undefined;
+    }
+    const panes = (this.snapshot?.panes ?? []).filter(
+      (pane) => pane.workspace_id === workspaceId && (!tabId || pane.tab_id === tabId),
+    );
+    const pane = panes.find((candidate) => candidate.focused) ?? panes[0];
+    const dir = pane?.foreground_cwd ?? pane?.cwd ?? undefined;
+    try {
+      return dir && fs.existsSync(dir) ? dir : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private tabLabel(tabId: string): string {
+    const tab = this.snapshot?.tabs.find((item) => item.tab_id === tabId);
+    return tab ? `tab ${tab.label}` : `tab ${tabId}`;
+  }
+
+  /**
+   * 一个 workspace 下的每个 herdr tab 各开一个 VSCode 终端页签：每个都**钉在** (workspace, tab) 上，
+   * 激活哪个页签就把 herdr 的当前 tab 切到它 —— 页签 ↔ herdr tab 一一对应。
+   * （herdr 的当前 tab 是服务端单值，所以做不到同时显示两个 tab 的内容。）
+   */
+  async openTabTerminals(workspaceId: string): Promise<void> {
+    const tabs = (this.snapshot?.tabs ?? []).filter((tab) => tab.workspace_id === workspaceId);
+    if (tabs.length === 0) {
+      void vscode.window.showWarningMessage('HerdrPlus：这个 workspace 还没有 tab。');
+      return;
+    }
+    tabs.forEach((tab, index) => {
+      this.openClient({
+        fresh: true,
+        target: workspaceId,
+        tab: tab.tab_id,
+        show: index === 0, // 只把第一个拉到前台，其余留在页签栏
+      });
+    });
+    this.traceAdd(`tabs→terminals ${workspaceId}: ${tabs.map((tab) => tab.tab_id).join(',')}`);
+  }
+
   private workspaceLabel(workspaceId: string): string {
     return this.snapshot?.workspaces.find((item) => item.workspace_id === workspaceId)?.label ?? workspaceId;
   }
@@ -834,9 +887,22 @@ export class HerdrService implements vscode.Disposable {
       return;
     }
     const target = this.pinnedTerminals.get(terminal);
-    if (target && this.snapshot?.focused_workspace_id !== target) {
-      this.traceAdd(`pin: activate ${target}`);
-      void this.focus('workspace', target);
+    if (!target) {
+      return;
+    }
+    void this.activatePinned(target);
+  }
+
+  /** 激活钉住的终端 → 把服务端焦点切到它的 workspace（有 tab 就再切 tab）。 */
+  private async activatePinned(target: { workspaceId: string; tabId?: string }): Promise<void> {
+    const snapshot = this.snapshot;
+    if (snapshot?.focused_workspace_id !== target.workspaceId) {
+      this.traceAdd(`pin: focus workspace ${target.workspaceId}`);
+      await this.focus('workspace', target.workspaceId);
+    }
+    if (target.tabId && snapshot?.focused_tab_id !== target.tabId) {
+      this.traceAdd(`pin: focus tab ${target.tabId}`);
+      await this.focus('tab', target.tabId);
     }
   }
 
@@ -1006,11 +1072,6 @@ export class HerdrService implements vscode.Disposable {
   }
 
   dispose(): void {
-    for (const entry of this.previews.values()) {
-      clearInterval(entry.timer);
-      entry.panel.dispose();
-    }
-    this.previews.clear();
     this.client.dispose();
     for (const disposable of this.disposables) {
       disposable.dispose();
@@ -1025,17 +1086,4 @@ export function supportsSecondarySidebar(): boolean {
     return false;
   }
   return major > 1 || (major === 1 && minor >= 106);
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char] ?? char);
-}
-
-function previewHtml(paneId: string, text: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-    body { margin: 0; padding: 10px; background: var(--vscode-editor-background); color: var(--vscode-editor-foreground);
-           font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 13px); }
-    header { opacity: .7; margin-bottom: 6px; }
-    pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
-  </style></head><body><header>pane ${escapeHtml(paneId)} · 最近输出（每 2s 刷新）</header><pre>${escapeHtml(text)}</pre></body></html>`;
 }

@@ -24,7 +24,6 @@ const ICON: Record<string, string> = {
   refresh: '<svg viewBox="0 0 16 16"><path d="M12.8 8a4.8 4.8 0 1 1-1.5-3.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M12.9 2.6v2.6h-2.6" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   sort: '<svg viewBox="0 0 16 16"><path d="M4.4 3.4v9.2M2.2 10.4l2.2 2.2 2.2-2.2M11.6 12.6V3.4M9.4 5.6l2.2-2.2 2.2 2.2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   agent: '<svg viewBox="0 0 16 16"><path d="M5.2 3.6 8 8.4l2.8-4.8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="11.4" r="1.3" fill="currentColor"/></svg>',
-  preview: '<svg viewBox="0 0 16 16"><path d="M1.8 8S4.4 4.2 8 4.2 14.2 8 14.2 8 11.6 11.8 8 11.8 1.8 8 1.8 8Z" stroke="currentColor" stroke-width="1.2" fill="none"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/></svg>',
   rename: '<svg viewBox="0 0 16 16"><path d="M3 13h2.4l6.7-6.7-2.4-2.4L3 10.6z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/><path d="M10.4 2.7 12.8 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>',
   split: '<svg viewBox="0 0 16 16"><rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 3.2v9.6" stroke="currentColor" stroke-width="1.2"/></svg>',
@@ -107,6 +106,14 @@ window.addEventListener('click', (event) => {
     closeMenu();
   }
 });
+/** webview 里的异常回传给 host（进 doctor trace）—— 侧栏白屏这类问题才不会只剩「点了没反应」。 */
+function reportError(message: string): void {
+  host.postMessage({ type: 'webview-error', message });
+}
+
+window.addEventListener('error', (event) => reportError(`${event.message} @${event.filename}:${event.lineno}`));
+window.addEventListener('unhandledrejection', (event) => reportError(`unhandled rejection: ${String(event.reason)}`));
+
 host.postMessage({ type: 'ready' });
 scheduleRender();
 
@@ -159,10 +166,21 @@ function onClick(event: MouseEvent): void {
   }
   if (action === 'focus' && id) {
     // 乐观：先把「当前」标识挪过去，终端随后跟随（失败会被下一次快照纠正）
+    const kind = target.dataset.kind === 'pane' ? 'pane' : target.dataset.kind === 'tab' ? 'tab' : 'workspace';
     optimisticCurrent = id;
-    host.postMessage({ type: 'focus', kind: target.dataset.kind === 'pane' ? 'pane' : 'workspace', id });
+    host.postMessage({ type: 'focus', kind, id });
     closeMenu();
     scheduleRender();
+    return;
+  }
+  if (action === 'focusTab' && id) {
+    optimisticCurrent = id;
+    host.postMessage({ type: 'focus', kind: 'tab', id });
+    scheduleRender();
+    return;
+  }
+  if (action === 'openTerminalForTab' && id) {
+    host.postMessage({ type: 'action', action, id });
     return;
   }
   closeMenu();
@@ -327,8 +345,11 @@ function currentKeys(): string[] {
     return [optimisticCurrent];
   }
   const focusedWorkspace = snapshot.workspaces.find((workspace) => workspace.focused);
+  const focusedTab = snapshot.tabs.find((tab) => tab.focused);
   const focusedPane = snapshot.panes.find((pane) => pane.focused);
-  return [focusedWorkspace?.workspace_id, focusedPane?.pane_id].filter((value): value is string => Boolean(value));
+  return [focusedWorkspace?.workspace_id, focusedTab?.tab_id, focusedPane?.pane_id].filter((value): value is string =>
+    Boolean(value),
+  );
 }
 
 /** 上段：workspace = 容器（位置），可展开看它的子 panel（pane）。 */
@@ -377,15 +398,44 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
       caret: { act: 'toggleWorkspace', id: workspace.workspace_id, glyph: isOpen ? 'chevronDown' : 'chevronRight' },
       actions: [
         { act: 'startAgent', id: workspace.workspace_id, title: '新起一个 Agent（新终端）', icon: 'agent' },
-        { act: 'previewWorkspace', id: workspace.workspace_id, title: '预览当前 pane 的输出', icon: 'preview' },
+        {
+          act: 'openTerminalPinned',
+          id: workspace.workspace_id,
+          title: '新开一个终端并钉在这个 workspace（激活该标签就切过去）',
+          icon: 'terminal',
+        },
         { act: 'closeWorkspace', id: workspace.workspace_id, title: '关闭这个 workspace（只关容器，不删目录）', icon: 'close' },
       ],
     });
     if (!isOpen) {
       continue;
     }
-    for (const pane of panes) {
-      models.push(paneRow(current, pane, true));
+    // 一个 workspace 的多个 herdr tab = 侧栏里的多个子节点（对应多个终端页签）；每个 tab 下挂它的 pane。
+    for (const tab of current.tabs.filter((item) => item.workspace_id === workspace.workspace_id)) {
+      const tabPanes = panes.filter((pane) => pane.tab_id === tab.tab_id);
+      models.push({
+        key: `tab:${tab.tab_id}`,
+        className: `row tab-row child${currentIds.includes(tab.tab_id) ? ' current' : ''}${
+          tabPanes.some((pane) => pane.agent_status === 'blocked') ? ' blocked' : ''
+        }`,
+        status: `dot status-${tabPanes[0]?.agent_status ?? 'unknown'}`,
+        statusTitle: `${tabPanes.length} pane`,
+        label: `tab ${tab.label}`,
+        detail: tabPanes.length > 1 ? `${tabPanes.length} pane` : '',
+        context: '',
+        actions: [
+          { act: 'focusTab', id: tab.tab_id, title: '在 herdr 终端里切到这个 tab', icon: 'terminal' },
+          {
+            act: 'openTerminalForTab',
+            id: tab.tab_id,
+            title: '为这个 tab 新开一个终端页签（激活即切过去）',
+            icon: 'split',
+          },
+        ],
+      });
+      for (const pane of tabPanes) {
+        models.push(paneRow(current, pane, true));
+      }
     }
   }
   return models;
@@ -415,8 +465,7 @@ function paneRow(current: SessionSnapshot, pane: PaneInfo, child: boolean): RowM
     detail: child ? (showsName ? name : '') : statusText,
     context: contextParts.filter(Boolean).join(' · '),
     actions: [
-      { act: 'focusPane', id: pane.pane_id, title: '跳到这个 pane（终端会跟随）', icon: 'terminal' },
-      { act: 'previewPaneAction', id: pane.pane_id, title: '预览这个 pane 的输出', icon: 'preview' },
+      { act: 'focusPane', id: pane.pane_id, title: '在 herdr 终端里跳到这个 pane（终端视图会跟着切过去）', icon: 'terminal' },
     ],
   };
 }
@@ -500,15 +549,15 @@ function patchRows(container: HTMLElement, models: RowModel[]): void {
 function createRow(model: RowModel): HTMLElement {
   const node = document.createElement('div');
   node.dataset.key = model.key;
-  const isPane = model.key.startsWith('pane:');
-  const id = model.key.slice(isPane ? 5 : 3);
+  const kind = model.key.slice(0, model.key.indexOf(':'));
+  const id = model.key.slice(model.key.indexOf(':') + 1);
   node.innerHTML = `<button class="caret" data-act="toggleWorkspace" data-id="${id}"></button>
     <span class="dot"></span>
-    <span class="row-main" data-act="focus" data-kind="${isPane ? 'pane' : 'workspace'}" data-id="${id}">
+    <span class="row-main" data-act="focus" data-kind="${kind}" data-id="${id}">
       <span class="label"></span>
       <span class="detail"></span>
     </span>
-    <span class="context" data-act="focus" data-kind="${isPane ? 'pane' : 'workspace'}" data-id="${id}"></span>
+    <span class="context" data-act="focus" data-kind="${kind}" data-id="${id}"></span>
     <span class="row-actions"></span>`;
   return node;
 }
@@ -581,15 +630,14 @@ function renderMenu(): void {
   const items: MenuItemModel[] =
     menu.kind === 'pane'
       ? [
-          { act: 'focusPane', label: '跳到这个 pane', icon: 'terminal' },
-          { act: 'previewPaneAction', label: '预览输出（当前栏）', icon: 'preview' },
-          { act: 'previewPaneBeside', label: '在新栏打开预览', icon: 'split' },
+          { act: 'focusPane', label: '在 herdr 终端里跳到这个 pane', icon: 'terminal' },
           { act: 'renamePane', label: '重命名 pane…', icon: 'rename' },
           { act: 'closePane', label: '关闭 pane', icon: 'close', danger: true },
         ]
       : [
-          { act: 'openClient', label: '打开 / 聚焦 herdr 终端', icon: 'terminal' },
+          { act: 'openClient', label: '打开 / 聚焦 herdr 终端（编辑器区）', icon: 'terminal' },
           { act: 'openTerminalPinned', label: '新开终端并钉在这个 workspace', icon: 'pin' },
+          { act: 'openTabTerminals', label: '为每个 tab 各开一个终端页签', icon: 'split' },
           { act: 'renameWorkspace', label: '重命名 workspace…', icon: 'rename' },
           { act: 'closeWorkspace', label: '关闭 workspace', icon: 'close', danger: true },
         ];

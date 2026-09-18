@@ -7,7 +7,6 @@ import { promisify } from 'node:util';
 
 import {
   ClientState,
-  PaneReadResponse,
   PongResult,
   SessionSnapshot,
   SUBSCRIPTIONS,
@@ -177,17 +176,7 @@ export class HerdrClient {
   }
 
   /** 读 pane 文本快照。socket 返回 `{type, read:{…}}`；CLI 的 `pane read` 直接打纯文本 —— 两条路都归一成字符串。 */
-  async readPane(paneId: string, lines = 60): Promise<string> {
-    const result = await this.request<PaneReadResponse | string>('pane.read', {
-      pane_id: paneId,
-      source: 'recent',
-      lines,
-    });
-    if (typeof result === 'string') {
-      return result;
-    }
-    return result.read?.text ?? '';
-  }
+
 
   /** 重取快照；pane 集合变化时重建事件订阅（作用域事件的 pane_id 是订阅参数）。 */
   async refresh(): Promise<void> {

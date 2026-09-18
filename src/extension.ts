@@ -54,12 +54,11 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('herdrplus.newWorkspace', () => service.newWorkspace()),
     vscode.commands.registerCommand('herdrplus.openClient', () => service.openClient()),
     vscode.commands.registerCommand('herdrplus.newTerminal', () => service.newTerminalView()),
+    vscode.commands.registerCommand('herdrplus.newTerminalHere', () => service.newTerminalHere()),
     vscode.commands.registerCommand('herdrplus.startAgent', () => service.startAgent({ mode: 'newTerminal' })),
     vscode.commands.registerCommand('herdrplus.startAgentHere', () =>
       service.startAgent({ mode: 'here', paneId: undefined }),
     ),
-    vscode.commands.registerCommand('herdrplus.previewPane', () => service.previewPane()),
-    vscode.commands.registerCommand('herdrplus.previewPaneBeside', () => service.previewPane(undefined, { beside: true })),
     vscode.commands.registerCommand('herdrplus.locate', () => service.locateCommand()),
     vscode.commands.registerCommand('herdrplus.installDocs', () => service.installDocs()),
     vscode.commands.registerCommand('herdrplus.openFloating', () => service.openFloating()),

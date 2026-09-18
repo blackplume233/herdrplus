@@ -12,7 +12,7 @@
     "conpty",
     "xterm"
   ],
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "herdrplus",
   "license": "MIT",
   "repository": {
@@ -136,12 +136,6 @@
         "category": "Herdr"
       },
       {
-        "command": "herdrplus.previewPane",
-        "title": "预览 Pane 输出",
-        "category": "Herdr",
-        "icon": "$(preview)"
-      },
-      {
         "command": "herdrplus.locate",
         "title": "定位/检查 herdr",
         "category": "Herdr"
@@ -180,26 +174,21 @@
         "icon": "$(link-external)"
       },
       {
-        "command": "herdrplus.previewPaneBeside",
-        "title": "预览 Pane 输出（新栏）",
+        "command": "herdrplus.newTerminalHere",
+        "title": "在当前 workspace 新开一个终端",
         "category": "Herdr",
-        "icon": "$(split-horizontal)"
+        "icon": "$(terminal)"
       }
     ],
     "menus": {
       "editor/title/context": [
-        {
-          "command": "herdrplus.previewPane",
-          "group": "herdr@3",
-          "when": "resourceScheme == 'vscode-terminal'"
-        },
         {
           "command": "herdrplus.startAgent",
           "group": "herdr@1",
           "when": "resourceScheme == 'vscode-terminal'"
         },
         {
-          "command": "herdrplus.previewPaneBeside",
+          "command": "herdrplus.newTerminalHere",
           "when": "resourceScheme == 'vscode-terminal'",
           "group": "herdrplus@2"
         }
@@ -208,6 +197,10 @@
         {
           "command": "herdrplus.startAgent",
           "group": "herdr@1"
+        },
+        {
+          "command": "herdrplus.newTerminalHere",
+          "group": "herdrplus@3"
         }
       ],
       "terminal/context": [
@@ -215,6 +208,10 @@
           "command": "herdrplus.startAgent",
           "when": "terminalFocus",
           "group": "herdr@1"
+        },
+        {
+          "command": "herdrplus.newTerminalHere",
+          "group": "herdrplus@3"
         }
       ],
       "view/title": [
@@ -315,11 +312,6 @@
         "command": "herdrplus.newWorkspace",
         "key": "ctrl+alt+n",
         "mac": "cmd+alt+n"
-      },
-      {
-        "command": "herdrplus.previewPane",
-        "key": "ctrl+alt+p",
-        "mac": "cmd+alt+p"
       }
     ]
   },
@@ -330,7 +322,7 @@
     "vscode:prepublish": "node esbuild.mjs",
     "launch": "node src/test/agent/launch.mjs",
     "qa": "node src/test/agent/verify.mjs",
-    "preview": "node scripts/preview-sidebar.mjs"
+    "render": "node scripts/render-sidebar.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

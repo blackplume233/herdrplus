@@ -368,8 +368,24 @@ footer {
   display: block;
 }
 
+/* 树形层级：workspace（dot 26px）→ tab（40px）→ pane（62px）。
+   父行有 caret 槽（14px + 6px gap），子行没有，所以用 padding 把 dot 顶到更深的位置：
+   子项的 dot 永远在父项 dot 右侧，不会出现「子项比父项更靠左」。 */
+.tab-row.child {
+  padding-left: 40px;
+}
+
 .pane-row.child {
-  padding-left: 22px;
+  padding-left: 62px;
+}
+
+.tab-row .label {
+  font-weight: 500;
+}
+
+/* hidden 的 caret 必须真的不占位：否则按钮的 display 会盖掉 UA 的 [hidden] 规则 */
+.row .caret[hidden] {
+  display: none;
 }
 
 .pane-row.child .label {

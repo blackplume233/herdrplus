@@ -2,10 +2,10 @@
  * 离线渲染侧栏 webview（不启动 VS Code）：把 media/style.css + media/sidebar.js 装进一个空白页，
  * 灌一份 fixture 快照，截图到 reports/。用于快速看观感、验证展开/折叠等纯前端行为。
  *
- *   bun run preview            # 默认 380x520 @3x
- *   bun run preview --expand   # 额外展开所有 workspace，看子 pane 行
+ *   bun run render            # 默认 380x520 @3x
+ *   bun run render --expand   # 额外展开所有 workspace，看 tab / pane 子行
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -16,8 +16,33 @@ const media = join(root, 'media');
 const reports = join(root, 'reports');
 mkdirSync(reports, { recursive: true });
 
-// 本地不一定装了 playwright 浏览器；默认让它用自带的，可用 HERDRPLUS_CHROME 指定别的 Chromium。
-const CHROME = process.env.HERDRPLUS_CHROME ?? undefined;
+/**
+ * 找一个能用的 Chromium：HERDRPLUS_CHROME > ms-playwright 里已下载的 > playwright 默认。
+ * （不写死个人路径，别人 clone 下来也能跑。）
+ */
+function findChrome() {
+  if (process.env.HERDRPLUS_CHROME) {
+    return process.env.HERDRPLUS_CHROME;
+  }
+  const roots = [process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'ms-playwright')].filter(Boolean);
+  for (const root of roots) {
+    if (!existsSync(root)) {
+      continue;
+    }
+    const candidates = readdirSync(root)
+      .filter((name) => name.startsWith('chromium-'))
+      .sort()
+      .reverse()
+      .map((name) => join(root, name, 'chrome-win', 'chrome.exe'))
+      .filter((file) => existsSync(file));
+    if (candidates.length > 0) {
+      return candidates[0];
+    }
+  }
+  return undefined; // 交给 playwright 的默认解析（未下载时会给出明确的安装提示）
+}
+
+const CHROME = findChrome();
 
 const pageFile = join(reports, 'preview.html');
 const snapshot = JSON.parse(readFileSync(join(root, 'src/test/fixtures/sidebar-snapshot.json'), 'utf8'));

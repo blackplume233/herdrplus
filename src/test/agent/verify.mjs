@@ -187,6 +187,8 @@ async function main() {
   const secondPane = JSON.parse(
     await herdr(['pane', 'split', dual.root_pane.pane_id, '--direction', 'down', '--focus']),
   ).result.pane.pane_id;
+  // 同一 workspace 里再开一个 herdr tab —— 侧栏的 workspace → tab → pane 三层与「每个 tab 一个终端页签」都靠它
+  await herdr(['tab', 'create', '--workspace', dual.root_pane.workspace_id, '--label', '2']);
   // agent 名字在 session 内唯一，两个 pane 必须用不同 name
   if (agentsAvailable) {
     await herdr(['agent', 'start', 'qa-dual-a', '--kind', 'pi', '--pane', dual.root_pane.pane_id]);
@@ -199,7 +201,7 @@ async function main() {
   }
   await herdr(['workspace', 'focus', dual.root_pane.workspace_id]);
   record(
-    '隔离环境就绪（5 workspace + qa-dual 内 2 个 pane）',
+    '隔离环境就绪（5 workspace；qa-dual = 2 tab / 3 pane）',
     true,
     agentsAvailable ? `含 ${AGENT_KIND} agent` : `本机没有 ${AGENT_KIND}：agent 相关断言将 SKIP`,
   );
@@ -272,7 +274,7 @@ async function main() {
     }
     return undefined;
   };
-  /** 编辑器区可能是 webview（预览看板）会吞掉键盘事件：先点标签栏空白处，把焦点交回 workbench。 */
+  /** 编辑器区可能是 webview（比如 Herdr 自己的视图）会吞掉键盘事件：先点标签栏空白处，把焦点交回 workbench。 */
   const focusWorkbench = async () => {
     await page.locator('.tabs-container').click({ position: { x: 6, y: 8 } }).catch(() => {});
     await sleep(250);
@@ -290,7 +292,7 @@ async function main() {
     await page.keyboard.press('Enter');
     await sleep(settle);
   };
-  /** 交互式终端 tab 的数量（我们给终端设了 codicon-terminal 图标；预览看板没有）。 */
+  /** 交互式终端 tab 的数量（我们给终端设了 codicon-terminal 图标，别的视图没有）。 */
   const terminalTabCount = () =>
     page.locator('.tabs-container .tab').filter({ has: page.locator('.codicon-terminal') }).count();
   const visibleTerminalText = async () =>
@@ -425,7 +427,7 @@ async function main() {
   await shot('04-command-palette');
   record(
     '命令面板列出 HerdrPlus 命令',
-    /打开 herdr 终端/.test(paletteText) && /启动 Agent（新终端）/.test(paletteText),
+    /打开 herdr 终端/.test(paletteText) && /启动 Agent（新终端）/.test(paletteText) && /在当前 workspace 新开一个终端/.test(paletteText),
     paletteText.replace(/\s+/g, ' ').slice(0, 140),
   );
   await page.keyboard.press('Escape');
@@ -481,7 +483,7 @@ async function main() {
   const menuText = await page.locator('.context-view').innerText().catch(() => '');
   record(
     '终端 tab 右键含 HerdrPlus 项、且已无「拆分 Pane」',
-    /启动 Agent（新终端）/.test(menuText) && !/拆分 Pane/.test(menuText),
+    /启动 Agent（新终端）/.test(menuText) && /在当前 workspace 新开一个终端/.test(menuText) && !/拆分 Pane/.test(menuText),
     menuText.replace(/\s+/g, ' ').slice(-120),
   );
   await page.keyboard.press('Escape');
@@ -578,16 +580,30 @@ async function main() {
     };
     const before = await children();
     const expandedBefore = await expandedIds();
-    const after = await clickCaretUntil(2);
+    const after = await clickCaretUntil(3);
     const expandedAfter = await expandedIds();
     const rows = ops.locator('[data-key^="pane:"]');
     const text = (await rows.allInnerTexts()).join(' | ').replace(/\s+/g, ' ');
     await shot('09e-foldout');
     record(
       '默认不展开任何 workspace；点 ▸ 才展开出它的 pane',
-      before === 0 && expandedBefore === '' && after === 2 && expandedAfter.split(',').length === 1,
+      before === 0 && expandedBefore === '' && after === 3 && expandedAfter.split(',').length === 1,
       `展开集合「${expandedBefore}」→「${expandedAfter}」，子行 ${before} → ${after}：${text.slice(0, 80)}`,
     );
+    // tab 行：workspace → tab → pane 的中间层，点它应该切服务端当前 tab
+    const tabRows = ops.locator('[data-key^="tab:"]');
+    const tabCount = await tabRows.count();
+    const tabId = (await tabRows.first().getAttribute('data-key')).slice(4);
+    await tabRows.first().locator('.row-main').click();
+    await sleep(2_500);
+    const focusedTab = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot.focused_tab_id;
+    const tabCurrent = await tabRows.first().getAttribute('class');
+    record(
+      'foldout 里有 tab 层：点 tab 行切服务端当前 tab',
+      tabCount === 2 && focusedTab === tabId && /current/.test(tabCurrent ?? ''),
+      `${tabCount} 个 tab 行，点 ${tabId} → 服务端 focused_tab=${focusedTab}`,
+    );
+
     // 子 pane 行 → 跳到那个 pane
     const paneId = (await rows.first().getAttribute('data-key')).slice(5);
     await rows.first().locator('.row-main').click();
@@ -613,8 +629,8 @@ async function main() {
     await opsAgents.locator('body').press('Escape');
     await sleep(300);
     record(
-      'agent 行右键为 pane 级菜单（跳转/预览×2/重命名/关闭）',
-      items.length === 5 && items.some((item) => item.includes('pane')),
+      'agent 行右键为 pane 级菜单（跳转终端/重命名/关闭）',
+      items.length === 3 && items.some((item) => item.includes('pane')),
       items.join(' / '),
     );
   });
@@ -646,8 +662,8 @@ async function main() {
       paneCount = await fallbackRow.locator('[data-action-key]').count();
     }
     record(
-      'workspace 行 3 个动作（新 Agent / 预览 / 关闭）、pane 行 2 个（跳转 / 预览）',
-      count === 3 && paneCount === 2,
+      'workspace 行 3 个动作（起 Agent / 开终端并钉住 / 关闭）、pane 行 1 个（跳转终端）',
+      count === 3 && paneCount === 1 && titles.some((t) => /钉/.test(t)),
       `workspace ${count}：${titles.join(' / ')}；pane ${paneCount}`,
     );
   });
@@ -682,8 +698,8 @@ async function main() {
     await sleep(400);
     const hiddenAfter = await ops.locator('.menu').isHidden();
     record(
-      '行右键菜单含 4 项且 Esc 可关',
-      visible && items.length === 4 && hiddenAfter,
+      '行右键菜单含 5 项且 Esc 可关',
+      visible && items.length === 5 && hiddenAfter,
       items.map((item) => item.trim()).join(' / '),
     );
   });
@@ -703,77 +719,6 @@ async function main() {
   });
 
   // 9b) 预览当前 pane（行内 ◫ → webview 面板）
-  const groupsBeforePreview = await page.locator('.editor-group-container').count();
-  const previewTarget = rowOf('qa-alpha');
-  await previewTarget.hover();
-  await sleep(300);
-  await previewTarget.locator('[data-act="previewWorkspace"]').click();
-  await sleep(2_500);
-  const groupsAfterPreview = await page.locator('.editor-group-container').count();
-  const previewFrames = page.frames().filter((f) => f.url().startsWith('vscode-webview://'));
-  let previewText = '';
-  for (const candidate of previewFrames) {
-    const text = await candidate.locator('body').innerText().catch(() => '');
-    if (/最近输出/.test(text)) {
-      previewText = text;
-      break;
-    }
-  }
-  await shot('10-preview');
-  record(
-    '侧栏 ◫ 预览 pane 输出（默认开在当前栏，不新开栏）',
-    /最近输出/.test(previewText) && groupsAfterPreview === groupsBeforePreview,
-    `${previewText.replace(/\s+/g, ' ').slice(0, 90)}｜编辑器组 ${groupsBeforePreview} → ${groupsAfterPreview}`,
-  );
-
-  // 9b2) 一个 pane 一个看板面板：给同一 workspace 的两个 pane 各开一个看板，各自显示自己的输出
-  await step('多个 pane 看板可以并排共存', async () => {
-    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
-    const rootPane = `${snap.focused_workspace_id}:p1`;
-    const secondPane = JSON.parse(
-      await herdr(['pane', 'split', rootPane, '--direction', 'down']),
-    ).result.pane.pane_id;
-    await herdr(['pane', 'run', secondPane, 'echo MARKER-WATCH-B']);
-    await herdr(['pane', 'run', rootPane, 'echo MARKER-WATCH-A']);
-    await sleep(2_000);
-    // 展开该 workspace → 两个子 pane 行各点一次 ◫（看板按 pane 独立）
-    const wsRow = ops.locator(`[data-key="ws:${snap.focused_workspace_id}"]`);
-    if ((await ops.locator(`[data-key="pane:${secondPane}"]`).count()) === 0) {
-      await wsRow.locator('.caret').click();
-      await sleep(800);
-    }
-    const groupsBefore = await page.locator('.editor-group-container').count();
-    const firstRow = ops.locator(`[data-key="pane:${rootPane}"]`);
-    await firstRow.hover();
-    await sleep(300);
-    await firstRow.locator('[data-act="previewPaneAction"]').click();
-    await sleep(2_500);
-    const groupsAfterFirst = await page.locator('.editor-group-container').count();
-    const secondRow = ops.locator(`[data-key="pane:${secondPane}"]`);
-    await secondRow.click({ button: 'right' });
-    await sleep(500);
-    await ops.locator('.menu .menu-item', { hasText: '在新栏打开预览' }).click();
-    await sleep(2_500);
-    await closeMenus();
-    const groupsAfterSecond = await page.locator('.editor-group-container').count();
-    const panelTexts = [];
-    for (const frame of page.frames().filter((f) => f.url().startsWith('vscode-webview://'))) {
-      const text = (await frame.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
-      if (/最近输出/.test(text)) {
-        panelTexts.push(text);
-      }
-    }
-    await shot('10b-two-watch-panels');
-    record(
-      '看板按 pane 独立：◫ 开在当前栏，右键「在新栏打开预览」才并排',
-      panelTexts.length >= 2 &&
-        panelTexts.some((text) => /MARKER-WATCH-A/.test(text)) &&
-        panelTexts.some((text) => /MARKER-WATCH-B/.test(text)) &&
-        groupsAfterSecond === groupsAfterFirst + 1 && groupsAfterFirst <= groupsBefore + 1,
-      `${panelTexts.length} 个看板：${panelTexts.map((text) => text.slice(0, 34)).join(' ｜ ')}｜编辑器组 ${groupsBefore} → ${groupsAfterFirst} → ${groupsAfterSecond}`,
-    );
-  });
-
   // 9b3) 钉住的终端：标签页各自记住一个 workspace，点谁就把服务端焦点切到谁
   await step('钉住的终端：切标签即切 workspace', async () => {
     const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
@@ -808,6 +753,75 @@ async function main() {
     );
   });
 
+  // 9b3b) 一个 workspace 的每个 herdr tab ↔ 一个 VSCode 终端页签
+  await step('每个 herdr tab 一个终端页签（激活即切 tab）', async () => {
+    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const dual = snap.workspaces.find((workspace) => workspace.tab_count >= 2);
+    const tabs = snap.tabs.filter((tab) => tab.workspace_id === dual.workspace_id);
+    if (!dual || tabs.length < 2) {
+      record(
+        '每个 herdr tab 一个终端页签（激活即切 tab）',
+        false,
+        `没找到多 tab 的 workspace（夹具里应该有：qa-dual 的 2 个 tab）`,
+      );
+      return;
+    }
+    const before = await terminalTabCount();
+    const row = ops.locator(`[data-key="ws:${dual.workspace_id}"]`);
+    await row.click({ button: 'right' });
+    await sleep(500);
+    await ops.locator('.menu .menu-item', { hasText: '为每个 tab 各开一个终端页签' }).click();
+    await sleep(6_000);
+    let after = before;
+    for (let attempt = 0; attempt < 15 && after < before + tabs.length; attempt++) {
+      after = await terminalTabCount();
+      if (after < before + tabs.length) {
+        await sleep(2_000);
+      }
+    }
+    await closeMenus();
+    // 点第二个 tab 对应的终端页签 → 服务端 focused_tab 应该跟着切过去
+    const secondLabel = tabs[1].label;
+    await focusTab(`· tab ${secondLabel}`).catch(() => '');
+    await sleep(2_500);
+    const focusedTab = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot.focused_tab_id;
+    await shot('10f-terminal-per-tab');
+    record(
+      '每个 herdr tab 一个终端页签（激活即切 tab）',
+      after >= before + tabs.length && focusedTab === tabs[1].tab_id,
+      `终端页签 ${before} → ${after}（期望 +${tabs.length}），点「tab ${secondLabel}」的页签 → 服务端 focused_tab=${focusedTab}（期望 ${tabs[1].tab_id}）`,
+    );
+  });
+
+  // 9b3c) 点哪一行，就亮出哪一行的终端（精准，不靠「切焦点让所有终端一起变」）
+  await step('选中行只亮出对应的那一个终端', async () => {
+    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const dual = snap.workspaces.find((workspace) => workspace.tab_count >= 2);
+    if (!dual) {
+      record('选中行只亮出对应的那一个终端', false, '没有多 tab 的 workspace');
+      return;
+    }
+    const tabs = snap.tabs.filter((tab) => tab.workspace_id === dual.workspace_id);
+    const wsRow = ops.locator(`[data-key="ws:${dual.workspace_id}"]`);
+    if ((await ops.locator(`[data-key="tab:${tabs[0].tab_id}"]`).count()) === 0) {
+      await wsRow.locator('.caret').click();
+      await sleep(800);
+    }
+    const activeTabText = async () =>
+      ((await page.locator('.tabs-container .tab.active').first().innerText().catch(() => '')) || '').replace(/\s+/g, ' ');
+    const seen = [];
+    for (const tab of [tabs[1], tabs[0]]) {
+      await ops.locator(`[data-key="tab:${tab.tab_id}"]`).locator('.row-main').click();
+      await sleep(3_000);
+      seen.push(await activeTabText());
+    }
+    record(
+      '点 tab 行 → 只把该 tab 的终端亮出来（两个 tab 轮换，互不串）',
+      new RegExp(`tab ${tabs[1].label}`).test(seen[0]) && new RegExp(`tab ${tabs[0].label}`).test(seen[1]),
+      `点 tab ${tabs[1].label} → 活动终端「${seen[0]}」；点 tab ${tabs[0].label} → 活动终端「${seen[1]}」`,
+    );
+  });
+
   // 9b4) 多 session：另一个 session 的终端可以和当前终端**同时**显示不同内容（真·多个 herdr 实例）
   await step('绑定另一个 session 的终端：两个终端显示不同内容', async () => {
     const OTHER = 'herdrplus-qa2';
@@ -838,17 +852,39 @@ async function main() {
     await sleep(16_000);
     const after = await terminalTabCount();
     const otherText = await focusTab(`@${OTHER}`);
-    const ownText = await focusTab('herdr');
+    const ownText = await focusTab(/^herdr$/); // 精确匹配不带后缀的那个终端
     await shot('10e-two-sessions');
     record(
       '多 session：两个终端各显示各的（切标签读内容，互不相同）',
-      after >= before &&
-        new RegExp(marker).test(otherText) &&
-        /MARKER-(ALPHA|WATCH-A|FOCUS)-OK|qa-/.test(ownText) &&
-        otherText !== ownText,
+      after >= before && new RegExp(marker).test(otherText) && !new RegExp(marker).test(ownText),
       `${before} → ${after} 个终端 tab；@${OTHER} 内容含 ${marker}=${new RegExp(marker).test(otherText)}，本 session 终端含自有内容=${/MARKER-(ALPHA|WATCH-A|FOCUS)-OK|qa-/.test(ownText)}`,
     );
     await run(HERDR, ['--session', OTHER, 'server', 'stop']).catch(() => {});
+  });
+
+  // 9c0) 一键：在当前 workspace 新开一个终端
+  await step('在当前 workspace 新开一个终端', async () => {
+    const focused = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const label =
+      focused.workspaces.find((workspace) => workspace.workspace_id === focused.focused_workspace_id)?.label ?? '';
+    // 按终端标签名（`herdr: <workspace 标签>`）数，比按图标数稳（图标可能还没渲染出来）
+    const pinnedTabs = () =>
+      page.locator('.tabs-container .tab').filter({ hasText: new RegExp(`^herdr:\\s*${label}`) }).count();
+    const before = await pinnedTabs();
+    await runCommand('Herdr: 在当前 workspace 新开一个终端', 6_000);
+    let after = before;
+    for (let attempt = 0; attempt < 12 && after <= before; attempt++) {
+      after = await pinnedTabs();
+      if (after <= before) {
+        await sleep(2_000);
+      }
+    }
+    await shot('11c-terminal-here');
+    record(
+      '「在当前 workspace 新开一个终端」新增一个钉在该 workspace 的终端页签',
+      after > before && label.length > 0,
+      `${label}：终端页签 ${before} → ${after}`,
+    );
   });
 
   // 9c) 新开终端视图：QuickPick 提供三类目标（跟随焦点 / 钉 workspace / 绑 session）
@@ -1090,9 +1126,33 @@ async function main() {
     console.log('[qa] doctor 报告未生成');
   }
 
+  // webview 自身不许有 JS 异常（白屏 / 「点了没反应」的头号原因）—— 错误会由 webview 回传到 trace
+  const doctorTrace = (() => {
+    try {
+      return JSON.parse(readFileSync(join(tmpdir(), 'herdrplus-doctor.json'), 'utf8')).trace ?? [];
+    } catch {
+      return [];
+    }
+  })();
+  const webviewErrors = doctorTrace.filter((line) => /webview error/i.test(line));
+  record(
+    'webview 无 JS 异常',
+    webviewErrors.length === 0,
+    webviewErrors.length === 0 ? 'trace 里没有 webview error' : webviewErrors.slice(0, 2).join(' | '),
+  );
+
+  // 从 workspace/tab 开终端时，终端进程的工作目录要是那个 workspace 的目录（不是 VSCode 默认）
+  const cwdLines = doctorTrace.filter((line) => /openClient:/.test(line) && line.includes(`cwd=${process.cwd()}`));
+  record(
+    '从 workspace 开终端用的是该 workspace 的目录',
+    cwdLines.length > 0,
+    `${cwdLines.length} 条 openClient 带 cwd=${process.cwd()}${cwdLines.length ? `；示例 ${cwdLines[cwdLines.length - 1].slice(0, 110)}` : ''}`,
+  );
+
   console.log('\n摘要：');
   for (const step of steps) {
-    console.log(`  ${step.ok ? '✓' : '✗'} ${step.name}`);
+    const mark = step.skipped ? '○' : step.ok ? '✓' : '✗';
+    console.log(`  ${mark} ${step.name}${!step.ok && step.detail ? ` — ${step.detail}` : ''}`);
   }
   console.log(`\n截图目录：${reportsDir}`);
 
