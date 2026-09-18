@@ -110,7 +110,9 @@ async function step(name, fn) {
   try {
     await fn();
   } catch (error) {
-    const message = String(error?.message ?? error).split('\n')[0].slice(0, 140);
+    // 诊断要能看出**是哪个 locator** 超时 → 取前两段（第二段是 Playwright 的 call log）
+    const raw = String(error?.message ?? error).split('\n').filter(Boolean);
+    const message = (raw[0] + (raw[1] ? ` ⟨${raw[1].trim()}⟩` : '')).slice(0, 240);
     if (!steps.some((entry) => entry.name === name)) {
       record(name, false, `异常：${message}`);
     } else {
