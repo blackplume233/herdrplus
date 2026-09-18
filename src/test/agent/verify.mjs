@@ -349,9 +349,21 @@ async function main() {
     )
       .join(' ')
       .replace(/\s+/g, ' ');
+  const tabTitles = async () =>
+    (await page.locator('.tabs-container .tab').allInnerTexts().catch(() => [])).map((text) => text.replace(/\s+/g, ' ').trim());
+  /** 等页签出现再点（终端打开有延迟；直接点会 30s 超时且看不出原因）。 */
   const focusTab = async (predicateText) => {
     const tab = page.locator('.tabs-container .tab').filter({ hasText: predicateText }).first();
-    await tab.click();
+    for (let attempt = 0; attempt < 15; attempt++) {
+      if ((await tab.count()) > 0) {
+        break;
+      }
+      await sleep(2_000);
+    }
+    if ((await tab.count()) === 0) {
+      throw new Error(`没有匹配「${String(predicateText)}」的终端页签，当前页签：${(await tabTitles()).join(' | ') || '（无）'}`);
+    }
+    await tab.click({ timeout: 10_000 });
     await sleep(3_000);
     return visibleTerminalText();
   };
@@ -998,10 +1010,11 @@ async function main() {
 
   // 9c0) 一键：在当前 workspace 新开一个终端
   await step('在当前 workspace 新开一个终端', async () => {
-    const focused = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
-    const label =
-      focused.workspaces.find((workspace) => workspace.workspace_id === focused.focused_workspace_id)?.label ?? '';
-    // 按终端标签名（`herdr: <workspace 标签>`）数，比按图标数稳（图标可能还没渲染出来）
+    // 用一个**新** workspace：pin 是 (workspace, tab) 级去重，沿用别的步骤留下的 workspace 会把
+    // 「新开」变成「聚焦已有的」——测的就不是「新开」了。
+    const label = `qa-pin-${Date.now().toString(36).slice(-4)}`;
+    JSON.parse(await herdr(['workspace', 'create', '--label', label, '--focus']));
+    await sleep(2_500);
     const pinnedTabs = () =>
       page.locator('.tabs-container .tab').filter({ hasText: new RegExp(`^herdr:\\s*${label}`) }).count();
     const before = await pinnedTabs();
