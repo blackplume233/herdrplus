@@ -190,9 +190,11 @@ export class HerdrService implements vscode.Disposable {
     const override = (config.get<string>('herdrConfigPath') ?? '').trim();
     if (override) {
       this.effectiveConfigPath = override;
-      return;
+    } else {
+      this.effectiveConfigPath = writeEffectiveConfig(this.context.globalStorageUri.fsPath, hide);
     }
-    this.effectiveConfigPath = writeEffectiveConfig(this.context.globalStorageUri.fsPath, hide);
+    // 同一份配置也交给 CLI（其中可能有一次就是拉起 server 的调用）。
+    this.client.configPath = this.effectiveConfigPath;
   }
 
   setActive(active: boolean): void {

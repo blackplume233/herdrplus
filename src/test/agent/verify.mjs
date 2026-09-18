@@ -111,8 +111,9 @@ async function step(name, fn) {
     await fn();
   } catch (error) {
     // 诊断要能看出**是哪个 locator** 超时 → 取前两段（第二段是 Playwright 的 call log）
-    const raw = String(error?.message ?? error).split('\n').filter(Boolean);
-    const message = (raw[0] + (raw[1] ? ` ⟨${raw[1].trim()}⟩` : '')).slice(0, 240);
+    const all = String(error?.message ?? error);
+    const locator = /locator\("([^"]{0,90})"\)/.exec(all)?.[1];
+    const message = (all.split('\n').filter(Boolean)[0] + (locator ? ` ⟨selector=${locator}⟩` : '')).slice(0, 240);
     if (!steps.some((entry) => entry.name === name)) {
       record(name, false, `异常：${message}`);
     } else {
@@ -574,10 +575,29 @@ async function main() {
   const rowOf = (label) => ops.locator('[data-key^="ws:"]').filter({ hasText: label }).first();
     const ensureExpanded = async (workspaceId, tabId) => {
       for (let attempt = 0; attempt < 4; attempt++) {
-        if ((await ops.locator(`[data-key="tab:${tabId}"]`).count()) > 0) {
+        const rows = await ops.locator(`[data-key="tab:${tabId}"]`).count();
+        console.log(`[qa] ensureExpanded ${workspaceId}/${tabId} attempt=${attempt} tabRows=${rows}`);
+        if (rows > 0) {
           return true;
         }
-        await ops.locator(`[data-key="ws:${workspaceId}"]`).locator('.caret').click();
+        const ws = ops.locator(`[data-key="ws:${workspaceId}"]`);
+        console.log(`[qa]   wsRows=${await ws.count()} caret=${await ws.locator('.caret').count()} box=${JSON.stringify(await ws.boundingBox().catch(() => null))}`);
+        try {
+          await ws.locator('.caret').click({ timeout: 5_000 });
+        } catch (error) {
+          const probe = await ops
+            .evaluate((id) => {
+              const row = document.querySelector(`[data-key="ws:${id}"]`);
+              const caret = row?.querySelector('.caret');
+              if (!caret) return 'no caret';
+              const box = caret.getBoundingClientRect();
+              const top = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+              return `top=${top?.className || top?.tagName} caretBox=${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)}h${Math.round(box.height)}`;
+            }, workspaceId)
+            .catch((e) => `probe failed: ${String(e.message).slice(0, 60)}`);
+          console.log(`[qa]   caret click failed: ${String(error.message).split('\n')[0].slice(0, 90)} | ${probe}`);
+          throw error;
+        }
         await sleep(800);
       }
       return (await ops.locator(`[data-key="tab:${tabId}"]`).count()) > 0;
@@ -871,16 +891,21 @@ async function main() {
     const tabRow = ops.locator(`[data-key="tab:${tab.tab_id}"]`);
     const before = await terminalTabCount();
     // 1) 右键 → 在当前页签打开：不应新开页签（点 .label：行中心会被 hover 出来的 row-actions 盖住）
-    await tabRow.locator('.label').click({ button: 'right' });
-    await sleep(500);
+    console.log(`[qa] tabRow count=${await tabRow.count()} label=${await tabRow.locator('.label').count()} box=${JSON.stringify(await tabRow.boundingBox().catch(() => null))}`);
+    await tabRow.locator('.label').click({ button: 'right', timeout: 8_000 });
+    await sleep(600);
+    const menuNode = ops.locator('.menu');
+    console.log(
+      `[qa] menu count=${await menuNode.count()} visible=${await menuNode.first().isVisible().catch(() => false)} text=${((await menuNode.first().innerText().catch(() => '')) || '').replace(/\s+/g, ' ').slice(0, 100)}`,
+    );
     const items = (await ops.locator('.menu .menu-item').allInnerTexts()).map((text) => text.trim());
-    await ops.locator('.menu .menu-item', { hasText: '在当前页签打开' }).click();
+    await ops.locator('.menu .menu-item', { hasText: '在当前页签打开' }).click({ timeout: 6_000 });
     await sleep(3_000);
     const afterFocus = await terminalTabCount();
     // 2) 右键 → 为新页签开一个终端：页签数 +1
     await tabRow.locator('.label').click({ button: 'right' });
     await sleep(500);
-    await ops.locator('.menu .menu-item', { hasText: '为新页签开一个终端' }).click();
+    await ops.locator('.menu .menu-item', { hasText: '为新页签开一个终端' }).click({ timeout: 6_000 });
     await sleep(6_000);
     let afterNew = afterFocus;
     for (let attempt = 0; attempt < 12 && afterNew <= afterFocus; attempt++) {

@@ -63,6 +63,8 @@ export class HerdrClient {
   private lastError?: string;
 
   private readonly binaryPath?: string;
+  /** 扩展生成的 herdr 配置（bare 内嵌终端用）——也带给 CLI：CLI 可能是**拉起 server 的那一次**调用。 */
+  configPath?: string;
   private readonly socketPath: string;
   private readonly cliFallback: boolean;
   private readonly log: (message: string) => void;
@@ -386,7 +388,10 @@ export class HerdrClient {
     if (!args) {
       throw new Error(`herdr CLI 无对应子命令：${method}（该操作需要 socket 连接）`);
     }
-    const { stdout } = await run(this.binaryPath!, args, { maxBuffer: 8 * 1024 * 1024 });
+    const { stdout } = await run(this.binaryPath!, args, {
+      maxBuffer: 8 * 1024 * 1024,
+      ...(this.configPath ? { env: { ...process.env, HERDR_CONFIG_PATH: this.configPath } } : {}),
+    });
     const last = stdout.trim().split('\n').pop() ?? '{}';
     const envelope = JSON.parse(last) as { result?: unknown; error?: { code?: string; message?: string } };
     if (envelope.error) {
