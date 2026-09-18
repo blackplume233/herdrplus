@@ -111,7 +111,12 @@ async function step(name, fn) {
     await fn();
   } catch (error) {
     // 诊断要能看出**是哪个 locator** 超时 → 取前两段（第二段是 Playwright 的 call log）
-    const all = String(error?.message ?? error);
+    // 失败后先清场：否则残留的浮层/菜单会让**后续步骤**连锁失败（一个真 bug 变成五六条红）。
+    await page.keyboard.press('Escape').catch(() => {});
+    await sleep(400);
+    await page.keyboard.press('Escape').catch(() => {});
+    await sleep(200);
+    const all = String(error?.message ?? error) + String(error?.stack ?? '');
     const locator = /locator\("([^"]{0,90})"\)/.exec(all)?.[1];
     const message = (all.split('\n').filter(Boolean)[0] + (locator ? ` ⟨selector=${locator}⟩` : '')).slice(0, 240);
     if (!steps.some((entry) => entry.name === name)) {
