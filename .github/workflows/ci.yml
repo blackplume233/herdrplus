@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -29,7 +29,7 @@ jobs:
         run: npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --out herdrplus-ci.vsix
 
       - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: herdrplus-vsix
           path: herdrplus-ci.vsix
