@@ -1,7 +1,7 @@
 name: qa
 
-# 真机端到端：装 herdr → 装 VS Code（官方 archive，免安装）→ 用 CDP 驱动扩展跑 38 条断言，截图存档。
-# 只在 Windows runner 上跑（herdr 用 ConPTY，VSCode 要 GUI 会话），默认手动/每晚触发，不挡 PR。
+# 真机端到端：装 herdr → 装 VS Code（官方 archive，免安装）→ 用 CDP 驱动扩展跑完整 QA，截图存档。
+# Windows runner（herdr 用 ConPTY、VS Code 要 GUI 会话），默认手动/每晚触发，不挡 PR。
 on:
   workflow_dispatch:
   schedule:
@@ -10,6 +10,9 @@ on:
 jobs:
   e2e:
     runs-on: windows-latest
+    env:
+      # verify.mjs 认这个变量指定宿主 VS Code（默认找 %LOCALAPPDATA%\Programs\Microsoft VS Code）
+      CODE_HOST_EXE: ${{ github.workspace }}\vscode\Code.exe
     steps:
       - uses: actions/checkout@v7
 
@@ -24,17 +27,21 @@ jobs:
         shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -c "irm https://herdr.dev/install.ps1 | iex"
-          herdr --version
-          herdr status
+          # 安装器只把 PATH 写进「未来的会话」，这里把当前版本目录显式接到后续步骤
+          $exe = Get-ChildItem "$env:USERPROFILE\.herdr\packages\standalone\releases" -Recurse -Filter herdr.exe |
+            Select-Object -First 1
+          if (-not $exe) { throw "herdr.exe 没装上" }
+          $exe.Directory.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $exe.FullName --version
+          & $exe.FullName status | Out-String | Write-Host
 
       - name: Install VS Code (portable archive)
         shell: pwsh
         run: |
           $zip = "$env:RUNNER_TEMP\vscode.zip"
           Invoke-WebRequest -Uri 'https://update.code.visualstudio.com/latest/win32-x64-archive/stable' -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\vscode" -Force
-          "$env:RUNNER_TEMP\vscode\Code.exe" --version
-          "HERDRPLUS_CODE_PATH=$env:RUNNER_TEMP\vscode\Code.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Expand-Archive -Path $zip -DestinationPath "${{ github.workspace }}\vscode" -Force
+          & "${{ github.workspace }}\vscode\Code.exe" --version
 
       - name: Build
         run: bun run build
