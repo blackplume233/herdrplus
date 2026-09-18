@@ -516,7 +516,16 @@ async function main() {
   await herdr(['workspace', 'focus', alpha.workspace_id]);
   await sleep(3_500);
   await shot('05b-focus-alpha');
-  const alphaText = await terminalText();
+  // 等 marker 真的上屏再读（CI 上渲染慢；滚动位置也可能让它晚一步出现在可视区）
+  const readUntil = async (needle, attempts = 8) => {
+    let text = await terminalText();
+    for (let attempt = 0; attempt < attempts && !needle.test(text); attempt++) {
+      await sleep(2_000);
+      text = await terminalText();
+    }
+    return text;
+  };
+  const alphaText = await readUntil(/MARKER-ALPHA-OK/);
   const focusOther = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-focus', '--focus'])).result;
   await herdr(['pane', 'run', focusOther.root_pane.pane_id, 'echo MARKER-FOCUS-OK']);
   await sleep(3_500);
@@ -1002,13 +1011,14 @@ async function main() {
   await step('绑定另一个 session 的终端：两个终端显示不同内容', async () => {
     const OTHER = 'herdrplus-qa2';
     const OTHER_SOCKET = join(process.env.APPDATA ?? '', 'herdr', 'sessions', OTHER, 'herdr.sock');
-    const otherHerdr = (args) => run(HERDR, ['--session', OTHER, ...args], { maxBuffer: 8 << 20 }).then((r) => r.stdout.trim());
+    // `--session <name>` 只是寻址：目标 session 的 server 没在跑时它直接 `server_not_running` 失败。
+    // 要「用某个 session」得像扩展那样设 HERDR_SESSION 环境变量（会按需拉起该 session 的 server）。
+    const OTHER_ENV = { ...process.env, HERDR_SESSION: OTHER };
+    const otherHerdr = (args) => run(HERDR, args, { maxBuffer: 8 << 20, env: OTHER_ENV }).then((r) => r.stdout.trim());
     let marker = '';
     if (!existsSync(OTHER_SOCKET)) {
-      await run(HERDR, ['--session', OTHER, 'server', 'stop']).catch(() => {});
-      await sleep(500);
       rmSync(dirname(OTHER_SOCKET), { recursive: true, force: true });
-      const otherServer = spawn(HERDR, ['--session', OTHER, 'server'], { detached: true, stdio: 'ignore' });
+      const otherServer = spawn(HERDR, ['server'], { detached: true, stdio: 'ignore', env: OTHER_ENV });
       otherServer.unref();
       for (let attempt = 0; attempt < 50 && !existsSync(OTHER_SOCKET); attempt++) {
         await sleep(300);
@@ -1056,7 +1066,7 @@ async function main() {
       after >= before && new RegExp(marker).test(otherText) && !new RegExp(marker).test(ownText),
       `${before} → ${after} 个终端 tab；@${OTHER} 内容含 ${marker}=${new RegExp(marker).test(otherText)}，本 session 终端含自有内容=${/MARKER-(ALPHA|WATCH-A|FOCUS)-OK|qa-/.test(ownText)}`,
     );
-    await run(HERDR, ['--session', OTHER, 'server', 'stop']).catch(() => {});
+    await run(HERDR, ['server', 'stop'], { env: OTHER_ENV }).catch(() => {});
   });
 
   // 9c0) 一键：在当前 workspace 新开一个终端
