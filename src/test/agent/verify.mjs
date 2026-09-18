@@ -1007,7 +1007,28 @@ async function main() {
         await sleep(300);
       }
     }
-    const created = JSON.parse(await otherHerdr(['workspace', 'create', '--label', 'qa-other', '--focus'])).result;
+    // server 起来 ≠ 能应答：socket 文件出现后再等它真的能回 snapshot，然后 create 也重试
+    for (let attempt = 0; attempt < 40; attempt++) {
+      try {
+        await otherHerdr(['api', 'snapshot']);
+        break;
+      } catch {
+        await sleep(500);
+      }
+    }
+    let created;
+    let lastError;
+    for (let attempt = 0; attempt < 6 && !created; attempt++) {
+      try {
+        created = JSON.parse(await otherHerdr(['workspace', 'create', '--label', 'qa-other', '--focus'])).result;
+      } catch (error) {
+        lastError = error;
+        await sleep(1_500);
+      }
+    }
+    if (!created) {
+      throw lastError ?? new Error('另一个 session 的 workspace 建不出来');
+    }
     marker = 'MARKER-OTHER';
     await otherHerdr(['pane', 'run', created.root_pane.pane_id, `echo ${marker}`]);
     await sleep(1_500);
