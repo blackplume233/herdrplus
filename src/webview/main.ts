@@ -164,6 +164,11 @@ function onClick(event: MouseEvent): void {
   const action = target.dataset.act!;
   const id = target.dataset.id;
 
+  // 菜单项**一旦选中就收起**：留着会盖住下面的行（第二次右键/点击直接点不中）。
+  if ((event.target as HTMLElement).closest('.menu')) {
+    closeMenu();
+  }
+
   if (action === 'toggleWorkspace' && id) {
     if (expanded.has(id)) {
       expanded.delete(id);

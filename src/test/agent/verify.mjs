@@ -900,10 +900,14 @@ async function main() {
     );
     const items = (await ops.locator('.menu .menu-item').allInnerTexts()).map((text) => text.trim());
     await ops.locator('.menu .menu-item', { hasText: '在当前页签打开' }).click({ timeout: 6_000 });
-    await sleep(3_000);
+    await sleep(1_200);
+    // 契约：菜单项选中后菜单必须自己收起（否则会盖住下面的行）
+    const menuGone = !(await menuNode.first().isVisible().catch(() => false));
+    record('菜单项选中后菜单自动收起', menuGone, menuGone ? '菜单已收起' : '菜单仍可见');
+    await sleep(2_000);
     const afterFocus = await terminalTabCount();
     // 2) 右键 → 为新页签开一个终端：页签数 +1
-    await tabRow.locator('.label').click({ button: 'right' });
+    await tabRow.locator('.label').click({ button: 'right', timeout: 8_000 });
     await sleep(500);
     await ops.locator('.menu .menu-item', { hasText: '为新页签开一个终端' }).click({ timeout: 6_000 });
     await sleep(6_000);
@@ -936,7 +940,7 @@ async function main() {
       ((await page.locator('.tabs-container .tab.active').first().innerText().catch(() => '')) || '').replace(/\s+/g, ' ');
     const seen = [];
     for (const tab of [tabs[1], tabs[0]]) {
-      await ops.locator(`[data-key="tab:${tab.tab_id}"]`).locator('.row-main').click();
+      await ops.locator(`[data-key="tab:${tab.tab_id}"]`).locator('.row-main').click({ timeout: 8_000 });
       await sleep(3_000);
       seen.push(await activeTabText());
     }
