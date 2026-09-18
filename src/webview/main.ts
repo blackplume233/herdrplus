@@ -12,7 +12,13 @@ declare function acquireVsCodeApi(): HostApi;
 type SortMode = 'number' | 'attention';
 type TargetKind = 'workspace' | 'pane';
 
+/** 排序模式之外，视图还从宿主收到「workspace → 锚定工作目录」（未锚定的不在表里）。 */
+type Anchors = Record<string, string>;
+
 const host = acquireVsCodeApi();
+
+/** 锚定工作目录：本扩展（或用户手动）给 workspace 定的目录，行的第二行要显示它。 */
+let anchors: Anchors = {};
 
 /** 「待处理」排序：等待输入 → 工作中 → 完成 → 空闲 → 未知（对齐 herdr 的 agent_panel_sort=priority）。 */
 const ATTENTION_RANK: Record<string, number> = { blocked: 0, working: 1, done: 2, idle: 3, unknown: 4 };
@@ -21,13 +27,13 @@ const ATTENTION_RANK: Record<string, number> = { blocked: 0, working: 1, done: 2
 const ICON: Record<string, string> = {
   newWorkspace: '<svg viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>',
   terminal: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v9h-11z" stroke="currentColor" stroke-width="1.2" fill="none" rx="1"/><path d="M4.6 6.4 6.4 8l-1.8 1.6M7.6 9.8h3" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  terminalNew: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v9h-11z" stroke="currentColor" stroke-width="1.2" fill="none" rx="1"/><path d="M4.5 6.3 6.2 7.9l-1.7 1.6M7.2 9.5h2.2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.3 5.1v2.5M10.05 6.35h2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   refresh: '<svg viewBox="0 0 16 16"><path d="M12.8 8a4.8 4.8 0 1 1-1.5-3.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M12.9 2.6v2.6h-2.6" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   sort: '<svg viewBox="0 0 16 16"><path d="M4.4 3.4v9.2M2.2 10.4l2.2 2.2 2.2-2.2M11.6 12.6V3.4M9.4 5.6l2.2-2.2 2.2 2.2" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   agent: '<svg viewBox="0 0 16 16"><path d="M5.2 3.6 8 8.4l2.8-4.8" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="11.4" r="1.3" fill="currentColor"/></svg>',
   rename: '<svg viewBox="0 0 16 16"><path d="M3 13h2.4l6.7-6.7-2.4-2.4L3 10.6z" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linejoin="round"/><path d="M10.4 2.7 12.8 5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
   close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>',
-  split: '<svg viewBox="0 0 16 16"><rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 3.2v9.6" stroke="currentColor" stroke-width="1.2"/></svg>',
-  pin: '<svg viewBox="0 0 16 16"><path d="M6 2.4h4l-.6 3.2 2 2.2H4.6l2-2.2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 7.8v5.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  folder: '<svg viewBox="0 0 16 16"><path d="M2.4 4.2h3.8l1.2 1.5h6.2v7.1H2.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
   chevronRight: '<svg viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   chevronDown: '<svg viewBox="0 0 16 16"><path d="M3.5 6l4.5 4.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   warn: '<svg viewBox="0 0 16 16"><path d="M8 2.4l5.6 10.2H2.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6.2v3.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11.1" r="0.7" fill="currentColor"/></svg>',
@@ -127,6 +133,7 @@ function onMessage(event: MessageEvent): void {
     state?: ClientState;
     sort?: SortMode;
     snapshot?: SessionSnapshot;
+    anchors?: Anchors;
     pending?: { title: string; confirmLabel: string } | null;
   };
   if (message.type === 'state' && message.state) {
@@ -134,6 +141,7 @@ function onMessage(event: MessageEvent): void {
     sort = message.sort === 'attention' ? 'attention' : 'number';
   } else if (message.type === 'snapshot' && message.snapshot) {
     snapshot = message.snapshot;
+    anchors = message.anchors ?? {};
     const current = currentKeys();
     if (current.includes(optimisticCurrent ?? '')) {
       optimisticCurrent = undefined; // 服务端已确认，交还给快照
@@ -369,6 +377,10 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
   for (const workspace of sorted) {
     const panes = current.panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
     const bits: string[] = [];
+    const anchor = anchors[workspace.workspace_id];
+    if (anchor) {
+      bits.push(shortPath(anchor));
+    }
     if (workspace.pane_count > 1) {
       bits.push(`${workspace.pane_count} pane`);
     }
@@ -429,7 +441,7 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
             act: 'openTerminalForTab',
             id: tab.tab_id,
             title: '为这个 tab 新开一个终端页签（激活即切过去）',
-            icon: 'split',
+            icon: 'terminalNew',
           },
         ],
       });
@@ -636,8 +648,16 @@ function renderMenu(): void {
         ]
       : [
           { act: 'openClient', label: '打开 / 聚焦 herdr 终端（编辑器区）', icon: 'terminal' },
-          { act: 'openTerminalPinned', label: '新开终端并钉在这个 workspace', icon: 'pin' },
-          { act: 'openTabTerminals', label: '为每个 tab 各开一个终端页签', icon: 'split' },
+          { act: 'openTerminalPinned', label: '新开终端并钉在这个 workspace', icon: 'terminalNew' },
+          { act: 'openTabTerminals', label: '为每个 tab 各开一个终端页签', icon: 'terminalNew' },
+          {
+            act: 'setWorkspaceCwd',
+            label: anchors[menu.id] ? '更改工作目录…' : '设置工作目录…',
+            icon: 'folder',
+          },
+          ...(anchors[menu.id]
+            ? [{ act: 'clearWorkspaceCwd', label: '清除工作目录（回到跟随 pane）', icon: 'close' }]
+            : []),
           { act: 'renameWorkspace', label: '重命名 workspace…', icon: 'rename' },
           { act: 'closeWorkspace', label: '关闭 workspace', icon: 'close', danger: true },
         ];

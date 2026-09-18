@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- **workspace 有工作目录了（锚定，不随 pane 漂）**：本扩展创建的 workspace 在创建那刻记下目录（`新建 Workspace` = 当前 VSCode 工作区目录，`启动 Agent（新终端）` 同上），之后**从它开的每个终端都从这里起**；pane 里 `cd` 过也不影响。没锚定的 workspace 保持老行为（跟着当前 pane 的目录），所以 CLI / herdr TUI 建的 workspace 行为不变。
+  - 手动：workspace 右键 `设置 / 更改工作目录…`、`清除工作目录（回到跟随 pane）`。
+  - 持久化在 `globalState`；快照里消失的 workspace 立刻丢锚（herdr 会复用 `workspace_id`，留着会串目录）。
+  - 侧栏 workspace 行的第二行最前面显示锚定目录（`…\extension · 2 pane · 2 tab`）。
+- **图标语义收紧**：`▣` = 打开 / 聚焦**已有**终端，`▣⁺` = **新开**一个终端 —— 凡「开终端」的动作一律用终端字形；原来「为这个 tab 新开一个终端页签」用的分屏字形、「新开终端并钉在这个 workspace」用的图钉字形都换掉了（`split` / `pin` 两个字形已删）。
+- QA：新增「锚定目录优先于 pane 的当前目录」断言（先锚定、再在 pane 里 `cd` 到别处，从侧栏开终端仍落在锚定目录）。
+
 ## 0.1.1
 
 - **移除只读预览（pane 看板）**：它是文本重放、渲染不准，不如直接开终端。相关命令、菜单项、快捷键 `Ctrl+Alt+P`、`pane.read` 调用一并删除（`herdrplus.previewPane` / `previewPaneBeside` 不再存在）。

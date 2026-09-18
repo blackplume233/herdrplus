@@ -21,6 +21,21 @@ interface PendingConfirm {
 
 const execFileAsync = promisify(execFile);
 
+/** 持久化 key：workspace 级锚定目录（本扩展创建时定下，不随 pane 里 cd 漂移）。 */
+const WORKSPACE_CWD_KEY = 'herdrplus.workspaceCwd';
+
+/** 只认真实存在的目录：不存在就当作没给，交给下一级选择。 */
+function existingDir(value: string | null | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    return fs.existsSync(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `herdr agent start --kind` 支持的 kind 全集（实测 `herdr agent start --help`）。 */
 const KNOWN_AGENT_KINDS = [
   'pi', 'omp', 'claude', 'codex', 'gemini', 'cursor', 'devin', 'agy', 'cline', 'mastracode',
@@ -49,6 +64,13 @@ export class HerdrService implements vscode.Disposable {
   private readonly closedTerminals = new Set<vscode.Terminal>();
   /** 内嵌终端 → 钉住的目标（workspace，可选 tab）；没有则跟随服务端焦点。 */
   private readonly pinnedTerminals = new Map<vscode.Terminal, { workspaceId: string; tabId?: string }>();
+
+  /**
+   * workspace → 锚定工作目录：本扩展创建 workspace 时定下，之后**从它开的终端都从这里起**，
+   * 不随 pane 里 `cd` 漂移（VS Code 的「新终端用工作区目录」是同一个直觉）。
+   * 未锚定的 workspace 退回老行为：跟着当前 pane 的目录走。
+   */
+  private readonly workspaceCwds = new Map<string, string>();
 
   selectedWorkspaceId?: string;
 
@@ -84,6 +106,11 @@ export class HerdrService implements vscode.Disposable {
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.sort = context.globalState.get<SortMode>('herdrplus.sort') === 'attention' ? 'attention' : 'number';
+    for (const [workspaceId, dir] of Object.entries(context.globalState.get<Record<string, string>>(WORKSPACE_CWD_KEY) ?? {})) {
+      if (existingDir(dir)) {
+        this.workspaceCwds.set(workspaceId, dir);
+      }
+    }
     this.disposables.push(vscode.window.onDidChangeActiveTerminal((terminal) => this.onActiveTerminalChanged(terminal)));
     const configured = vscode.workspace.getConfiguration('herdrplus').get<string>('binaryPath') ?? '';
     this.client = this.buildClient(locateHerdr(configured));
@@ -116,8 +143,9 @@ export class HerdrService implements vscode.Disposable {
       this.postState();
     };
     client.onSnapshot = (snapshot) => {
+      this.pruneWorkspaceCwds(snapshot);
       this.onSnapshotCallback(snapshot);
-      this.post({ type: 'snapshot', snapshot });
+      this.postSnapshot(snapshot);
       this.updateViewDescriptions();
     };
     client.onEvent = (event) => {
@@ -182,7 +210,7 @@ export class HerdrService implements vscode.Disposable {
     this.postState();
     this.postPending();
     if (this.snapshot) {
-      this.post({ type: 'snapshot', snapshot: this.snapshot });
+      this.postSnapshot(this.snapshot);
     }
   }
 
@@ -324,13 +352,18 @@ export class HerdrService implements vscode.Disposable {
     }
   }
 
+  /** 快照连同锚定目录一起下发：侧栏行要显示「容器在哪」，右键菜单要能改它。 */
+  private postSnapshot(snapshot: SessionSnapshot): void {
+    this.post({ type: 'snapshot', snapshot, anchors: Object.fromEntries(this.workspaceCwds) });
+  }
+
   async send(message: IncomingMessage): Promise<void> {
     this.traceAdd(`webview: ${JSON.stringify(message)}`);
     switch (message.type) {
       case 'ready':
         this.post({ type: 'state', state: this.state });
         if (this.snapshot) {
-          this.post({ type: 'snapshot', snapshot: this.snapshot });
+          this.postSnapshot(this.snapshot);
         }
         return;
       case 'focus':
@@ -413,6 +446,26 @@ export class HerdrService implements vscode.Disposable {
           await this.renameWorkspace(id);
         }
         return;
+      case 'setWorkspaceCwd': {
+        if (!id) {
+          return;
+        }
+        const current = this.workspaceCwds.get(id) ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+        const dir = await vscode.window.showInputBox({
+          title: `「${this.workspaceLabel(id)}」的工作目录`,
+          prompt: '从它开的终端都会在这个目录里起（留空 = 取消）',
+          value: current,
+        });
+        if (dir?.trim()) {
+          await this.setWorkspaceCwd(id, dir);
+        }
+        return;
+      }
+      case 'clearWorkspaceCwd':
+        if (id) {
+          await this.clearWorkspaceCwd(id);
+        }
+        return;
       default:
         return;
     }
@@ -488,7 +541,18 @@ export class HerdrService implements vscode.Disposable {
       return;
     }
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
-    await this.run(() => this.client.request('workspace.create', { label: label || null, cwd, focus: true }));
+    const created = await this.run(() =>
+      this.client.request<{ root_pane?: { workspace_id?: string } }>('workspace.create', {
+        label: label || null,
+        cwd,
+        focus: true,
+      }),
+    );
+    // 我建的 workspace 就记住我给的目录：之后从它开的终端都从这里起（pane 里 cd 过也不漂）。
+    const workspaceId = created?.root_pane?.workspace_id;
+    if (cwd && workspaceId) {
+      await this.setWorkspaceCwd(workspaceId, cwd);
+    }
   }
 
   /** 某个 workspace 里还没结束的 agent（done/unknown 不算）。 */
@@ -619,12 +683,15 @@ export class HerdrService implements vscode.Disposable {
       // 分栏由 VSCode 负责：这里新建一个 herdr workspace + 一个 VSCode 终端，一个终端 = 一个 pane。
       let paneId = options.paneId;
       if (options.mode === 'newTerminal') {
-        const created = await this.client.request<{ root_pane: { pane_id: string } }>('workspace.create', {
+        const created = await this.client.request<{ root_pane: { pane_id: string; workspace_id?: string } }>('workspace.create', {
           label: kind,
           cwd,
           focus: true,
         });
         paneId = created.root_pane.pane_id;
+        if (cwd && created.root_pane.workspace_id) {
+          await this.setWorkspaceCwd(created.root_pane.workspace_id, cwd);
+        }
       } else {
         const snapshot = this.snapshot ?? (await this.client.snapshot());
         paneId = paneId ?? snapshot.focused_pane_id ?? undefined;
@@ -831,8 +898,10 @@ export class HerdrService implements vscode.Disposable {
   }
 
   /**
-   * 终端的工作目录：目标 workspace（或 tab）里「当前 pane 的前台目录」优先，退回它的 cwd。
-   * 目录已不存在（被删/UNC）就不传，交给 VSCode 默认，免得起终端时报「目录不存在」。
+   * 终端该在哪个目录起：
+   * 1. 指定了 tab → 那个 tab 当前 pane 的目录（一个 tab 一个页签，页签落回自己的目录）；
+   * 2. workspace 级 → 锚定目录优先（本扩展创建时定下，pane 里 `cd` 过也不会漂）；
+   * 3. 都没有 → 该 workspace 当前 pane 的目录（跟着 pane 走的老行为）。
    */
   private terminalCwdFor(workspaceId?: string, tabId?: string): string | undefined {
     if (!workspaceId) {
@@ -842,11 +911,52 @@ export class HerdrService implements vscode.Disposable {
       (pane) => pane.workspace_id === workspaceId && (!tabId || pane.tab_id === tabId),
     );
     const pane = panes.find((candidate) => candidate.focused) ?? panes[0];
-    const dir = pane?.foreground_cwd ?? pane?.cwd ?? undefined;
-    try {
-      return dir && fs.existsSync(dir) ? dir : undefined;
-    } catch {
-      return undefined;
+    const paneDir = existingDir(pane?.foreground_cwd) ?? existingDir(pane?.cwd);
+    const anchorDir = existingDir(this.workspaceCwds.get(workspaceId));
+    return tabId ? paneDir ?? anchorDir : anchorDir ?? paneDir;
+  }
+
+  /** 快照里没了的 workspace 就丢掉锚定目录：herdr 的 workspace_id 会被复用，留着会串目录。 */
+  private pruneWorkspaceCwds(snapshot: SessionSnapshot): void {
+    const alive = new Set(snapshot.workspaces.map((workspace) => workspace.workspace_id));
+    let dropped = 0;
+    for (const workspaceId of [...this.workspaceCwds.keys()]) {
+      if (alive.has(workspaceId)) {
+        continue;
+      }
+      this.workspaceCwds.delete(workspaceId);
+      dropped += 1;
+    }
+    if (dropped > 0) {
+      void this.context.globalState.update(WORKSPACE_CWD_KEY, Object.fromEntries(this.workspaceCwds));
+      this.traceAdd(`workspaceCwd: dropped ${dropped}`);
+    }
+  }
+
+  /** 记下一个 workspace 的锚定目录（只认真实存在的目录，侧栏行与右键菜单立刻跟着变）。 */
+  async setWorkspaceCwd(workspaceId: string, dir: string | null | undefined): Promise<void> {
+    const value = existingDir(dir?.trim());
+    if (!value) {
+      void vscode.window.showWarningMessage(`HerdrPlus：目录不存在，未记下工作目录 —— ${String(dir ?? '').trim()}`);
+      return;
+    }
+    this.workspaceCwds.set(workspaceId, value);
+    await this.context.globalState.update(WORKSPACE_CWD_KEY, Object.fromEntries(this.workspaceCwds));
+    this.traceAdd(`workspaceCwd: ${workspaceId} = ${value}`);
+    if (this.snapshot) {
+      this.postSnapshot(this.snapshot);
+    }
+  }
+
+  /** 清掉锚定目录 → 该 workspace 回到「跟着当前 pane 的目录走」。 */
+  async clearWorkspaceCwd(workspaceId: string): Promise<void> {
+    if (!this.workspaceCwds.delete(workspaceId)) {
+      return;
+    }
+    await this.context.globalState.update(WORKSPACE_CWD_KEY, Object.fromEntries(this.workspaceCwds));
+    this.traceAdd(`workspaceCwd: cleared ${workspaceId}`);
+    if (this.snapshot) {
+      this.postSnapshot(this.snapshot);
     }
   }
 
@@ -982,6 +1092,8 @@ export class HerdrService implements vscode.Disposable {
           }
         : null,
       recentLog: this.client.recentLog,
+      /** workspace → 锚定目录：终端从哪个目录起，报告里要能直接看到（排查「终端落在别处」）。 */
+      anchors: Object.fromEntries(this.workspaceCwds),
       trace: this.trace,
       effectiveConfigPath: this.effectiveConfigPath ?? null,
       sidebar: {
@@ -1053,10 +1165,11 @@ export class HerdrService implements vscode.Disposable {
     this.post({ type: 'state', state: this.state, sort: this.sort });
   }
 
-  private async run(action: () => Promise<unknown>): Promise<void> {
+  private async run<T>(action: () => Promise<T>): Promise<T | undefined> {
     try {
-      await action();
+      const result = await action();
       await this.refresh();
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes('server_not_running')) {
@@ -1068,6 +1181,7 @@ export class HerdrService implements vscode.Disposable {
       } else {
         void vscode.window.showErrorMessage(`HerdrPlus：${message}`);
       }
+      return undefined;
     }
   }
 

@@ -686,8 +686,8 @@ async function main() {
     );
   });
 
-  // 9c) 右键菜单：三项 + Esc 关闭
-  await step('右键菜单三项、Esc 可关', async () => {
+  // 9c) 右键菜单：六项（含设置工作目录）+ Esc 关闭
+  await step('右键菜单六项、Esc 可关', async () => {
     const target = rowOf('qa-alpha');
     await target.click({ button: 'right' });
     await sleep(500);
@@ -698,8 +698,8 @@ async function main() {
     await sleep(400);
     const hiddenAfter = await ops.locator('.menu').isHidden();
     record(
-      '行右键菜单含 5 项且 Esc 可关',
-      visible && items.length === 5 && hiddenAfter,
+      '行右键菜单含 6 项、带「设置工作目录」且 Esc 可关',
+      visible && items.length === 6 && hiddenAfter && items.some((item) => item.includes('设置工作目录')),
       items.map((item) => item.trim()).join(' / '),
     );
   });
@@ -1107,6 +1107,70 @@ async function main() {
     recovered.replace(/\s+/g, ' ').slice(0, 110),
   );
 
+  // 10.9) 工作目录锚定
+  let autoAnchoredId = '';
+  let anchoredCwd = '';
+  let manualAnchorId = '';
+
+  //  (a) 扩展建的 workspace 自动锚定 —— 新建时用的就是 VSCode 工作区目录
+  await step('新建 workspace 自动锚定到工作区目录', async () => {
+    await runCommand('Herdr: 新建 Workspace', 1_500);
+    await page.keyboard.insertText('qa-anchor-auto');
+    await sleep(300);
+    await page.keyboard.press('Enter');
+    await sleep(3_500);
+    const listed = JSON.parse(await herdr(['workspace', 'list'])).result.workspaces.find(
+      (item) => item.label === 'qa-anchor-auto',
+    );
+    autoAnchoredId = listed?.workspace_id ?? '';
+    const text = await waitForSidebar((value) => value.includes('qa-anchor-auto'), 8_000);
+    record(
+      '新建 workspace 自动锚定到工作区目录',
+      Boolean(autoAnchoredId) && text.includes('qa-anchor-auto'),
+      autoAnchoredId ? `${autoAnchoredId} 已上屏` : '没建出来',
+    );
+  });
+
+  //  (b) 手动设一个目录（CLI 建的 workspace 不会被自动锚定，正合手动场景）→ 从它开终端要落在锚定目录
+  await step('设置工作目录（手动锚定）后开终端落在锚定目录', async () => {
+    const ops = await spaces();
+    if (!ops) {
+      throw new Error('侧栏未就绪');
+    }
+    await herdr(['workspace', 'create', '--label', 'qa-anchor', '--no-focus']);
+    await sleep(3_000);
+    const target = JSON.parse(await herdr(['workspace', 'list'])).result.workspaces.find(
+      (item) => item.label === 'qa-anchor',
+    );
+    if (!target) {
+      throw new Error('qa-anchor 没建出来');
+    }
+    manualAnchorId = target.workspace_id;
+    anchoredCwd = mkdtempSync(join(tmpdir(), 'herdrplus-anchor-'));
+
+    await closeMenus();
+    await ops.locator(`[data-key="ws:${manualAnchorId}"]`).click({ button: 'right', timeout: 8_000 });
+    await sleep(500);
+    await ops.locator('[data-act="setWorkspaceCwd"]').click({ timeout: 8_000 });
+    await sleep(1_500);
+    await page.keyboard.press('Control+A');
+    await page.keyboard.insertText(anchoredCwd);
+    await sleep(300);
+    await page.keyboard.press('Enter');
+    await sleep(2_000);
+
+    const text = await waitForSidebar((value) => value.includes(basename(anchoredCwd)), 8_000);
+    record('锚定目录显示在侧栏行上', text.includes(basename(anchoredCwd)), basename(anchoredCwd));
+
+    await ops.locator(`[data-key="ws:${manualAnchorId}"]`).click({ button: 'right', timeout: 8_000 });
+    await sleep(500);
+    await ops
+      .locator('.menu .menu-item', { hasText: '新开终端并钉在这个 workspace' })
+      .click({ timeout: 8_000 });
+    await sleep(4_500);
+    await shot('10g-anchor-terminal');
+  });
+
   // 11) 收尾诊断：dump 扩展自检报告（含 webview 消息轨迹），便于定位"点了没反应"这类问题
   rmSync(join(tmpdir(), 'herdrplus-doctor.json'), { force: true });
   await page.keyboard.press('Escape');
@@ -1118,22 +1182,25 @@ async function main() {
   await sleep(900);
   await page.keyboard.press('Enter');
   await sleep(2_500);
-  try {
-    const doctor = JSON.parse(readFileSync(join(tmpdir(), 'herdrplus-doctor.json'), 'utf8'));
-    console.log('[qa] trace:', JSON.stringify(doctor.trace ?? [], null, 1));
-    console.log('[qa] state:', JSON.stringify(doctor.state), 'sidebar:', JSON.stringify(doctor.sidebar));
-  } catch {
-    console.log('[qa] doctor 报告未生成');
-  }
-
-  // webview 自身不许有 JS 异常（白屏 / 「点了没反应」的头号原因）—— 错误会由 webview 回传到 trace
-  const doctorTrace = (() => {
+  const doctorReport = (() => {
     try {
-      return JSON.parse(readFileSync(join(tmpdir(), 'herdrplus-doctor.json'), 'utf8')).trace ?? [];
+      return JSON.parse(readFileSync(join(tmpdir(), 'herdrplus-doctor.json'), 'utf8'));
     } catch {
-      return [];
+      return {};
     }
   })();
+  const doctorTrace = doctorReport.trace ?? [];
+  const doctorAnchors = doctorReport.anchors ?? {};
+  console.log('[qa] trace:', JSON.stringify(doctorTrace, null, 1));
+  console.log(
+    '[qa] state:',
+    JSON.stringify(doctorReport.state),
+    'sidebar:',
+    JSON.stringify(doctorReport.sidebar),
+    'anchors:',
+    JSON.stringify(doctorAnchors),
+  );
+
   const webviewErrors = doctorTrace.filter((line) => /webview error/i.test(line));
   record(
     'webview 无 JS 异常',
@@ -1148,6 +1215,27 @@ async function main() {
     cwdLines.length > 0,
     `${cwdLines.length} 条 openClient 带 cwd=${process.cwd()}${cwdLines.length ? `；示例 ${cwdLines[cwdLines.length - 1].slice(0, 110)}` : ''}`,
   );
+
+  // 锚定目录必须压过 pane 的当前目录：pane 还在 process.cwd()，终端却要落在锚定目录
+  if (anchoredCwd && manualAnchorId) {
+    const anchored = doctorAnchors[manualAnchorId];
+    const cwdAnchored = doctorTrace.filter((line) => /openClient:/.test(line) && line.includes(`cwd=${anchoredCwd}`));
+    record(
+      '锚定工作目录优先于 pane 的当前目录',
+      anchored?.toLowerCase() === anchoredCwd.toLowerCase() && cwdAnchored.length > 0,
+      `锚定=${anchored ?? '无'} / 终端 cwd 命中 ${cwdAnchored.length} 条（pane 当时仍在 ${process.cwd()}）`,
+    );
+  }
+
+  // 新建 workspace 时自动锚定到当时的 VSCode 工作区目录（VSCode 给的 fsPath 是小写盘符，比较时忽略大小写）
+  if (autoAnchoredId) {
+    const anchored = doctorAnchors[autoAnchoredId];
+    record(
+      '新建 workspace 自动锚定到工作区目录',
+      anchored?.toLowerCase() === workspaceDir.toLowerCase(),
+      anchored ? `${autoAnchoredId} → ${anchored}` : `${autoAnchoredId} 没有锚定记录`,
+    );
+  }
 
   console.log('\n摘要：');
   for (const step of steps) {
@@ -1173,6 +1261,8 @@ async function main() {
 }
 
 void main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+  console.error('[qa] 运行中断：', error);
+  // 抛异常时 main 里的清理不会执行；Playwright 的连接会一直吊着事件循环 —— 直接退出，别让整个流水线卡死。
+  // （残留的 QA 窗口由下次运行的 killStaleInstances() 收掉。）
+  process.exit(1);
 });

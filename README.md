@@ -22,28 +22,39 @@ herdr 的 TUI 仍是真的（ConPTY 里跑 `herdr.exe`），扩展只做外骨�
 | **点 pane 行主体** | 跳到那个 pane | 同上：亮出它所属 tab 的终端 |
 | **点 pane 行主体**（Agents view 任意行、workspace 展开后的子行） | 跳到那个 pane | 同上；`focusPane` → 服务端 `focused_pane_id` |
 | **行首 `▸/▾`**（workspace 行） | 展开/折叠：**workspace → tab → pane** 三层（tab = herdr 的「终端」，一行一个；每个 tab 下挂它的 pane） | 展开集合按 webview 记忆；默认全折叠。点 tab 行 = 切服务端当前 tab |
-| tab 行 hover：`▣` / `⊞` | 在 herdr 终端里切到这个 tab / **为这个 tab 新开一个终端页签**（激活即切过去） | 一个 herdr tab ↔ 一个 VSCode 终端页签 |
-| workspace 行右键：`为每个 tab 各开一个终端页签` | 一次把这个 workspace 的每个 herdr tab 各开成一个终端页签 | 页签栏就是她的 tab 列表 |
+| tab 行 hover：`▣` / `▣⁺` | 在 herdr 终端里切到这个 tab / **为这个 tab 新开一个终端页签**（激活即切过去） | 一个 herdr tab ↔ 一个 VSCode 终端页签 |
+| workspace 行右键：`▣⁺ 为每个 tab 各开一个终端页签` | 一次把这个 workspace 的每个 herdr tab 各开成一个终端页签 | 页签栏就是她的 tab 列表 |
 | **当前标识**（侧栏里唯一的强标识） | — | 左侧 2px accent 竖条 + 选中底色 + 标签加粗 —— 只表示「终端正在显示它」 |
 | workspace 行 hover：`▷` | 新建 herdr workspace + 新终端并启动 Agent（**指向该行**） | QuickPick 选 kind；agent 名在 session 内唯一，重名自动 `pi-2`/`pi-3` |
-| workspace 行 hover：`▣` | 新开一个终端并**钉在这个 workspace**（激活该标签就切过去） | 终端的工作目录 = 该 workspace 当前 pane 的目录 |
+| workspace 行 hover：`▣⁺` | 新开一个终端并**钉在这个 workspace**（激活该标签就切过去） | 终端的工作目录 = 该 workspace 的**锚定目录**（没锚定才用当前 pane 的目录，见下） |
 | workspace 行 hover：`✕` | 关闭这个 workspace（**只关容器，不删目录**） | 里面有没结束的 agent 时**先出内联确认条** |
 | pane 行 hover：`▣` | 在 herdr 终端里**跳到这个 pane** | 只留终端动作；预览功能已移除 |
-| 行右键（workspace） | `打开 / 聚焦 herdr 终端`（全局）、`重命名…`、`关闭 workspace`（红色） | Esc / 点别处关闭；越界自动夹回视口 |
+| 行右键（workspace） | `▣ 打开 / 聚焦 herdr 终端`（全局）、`▣⁺ 新开终端并钉在这个 workspace`、`▣⁺ 为每个 tab 各开一个终端页签`、`▣ 设置 / 更改工作目录…`、`✕ 清除工作目录`（仅已锚定）、`重命名…`、`关闭 workspace`（红色） | Esc / 点别处关闭；越界自动夹回视口 |
 | 行右键（pane） | `在 herdr 终端里跳到这个 pane`、`重命名 pane…`、`关闭 pane`（红色，会结束进程） | 关 pane **先出确认条** |
 | 确认条 | 破坏性操作的二次确认（关 workspace / 关 pane / 归档关闭） | 按钮文案 `仍然关闭` / `关闭 pane` / `关闭这些` + `取消`；Esc = 取消，Enter = 确认 |
 
-**设计原则**：行内只留「指向该行」的高频动作 —— **一切以终端为中心**（切过去、跳过去、起 Agent、为它开终端、关掉）；全局动作在 view 标题上（VSCode 原生的 title action，列表折叠时也够得着），低频动作（重命名）在右键菜单。只读预览功能已移除（文本重放渲染不准，不如直接开终端）。
+**设计原则**：行内只留「指向该行」的高频动作 —— **一切以终端为中心**（切过去、跳过去、起 Agent、为它开终端、关掉）；全局动作在 view 标题上（VSCode 原生的 title action，列表折叠时也够得着），低频动作（重命名）在右键菜单。只读预览功能已移除（文本重放渲染不准，不如直接开终端）。**图标语言**：`▣` = 打开 / 聚焦**已有**终端；`▣⁺` = **新开**一个终端 —— 凡是「开终端」的动作一律用终端字形，不用分屏 / 图钉之类的字形。
 
 **为什么确认条不是系统弹窗**：`showWarningMessage(..., {modal: true})` 在 VSCode 1.13x 是**原生 OS 对话框** —— 不在 workbench DOM 里、CDP 抓不到、自动化也点不动（QA 实测：键盘事件打不进去，只会把焦点还给 webview 再触发一次原按钮）。内联确认条既能列出「到底要关哪些」，又能被 QA 端到端验证（确认前不动 / 确认后真关 / 取消则不动）。
 
 | 区域 | 行为 |
 | --- | --- |
-| 侧栏（活动栏或第二侧栏，1.106+ 走后者） | **两个原生 view 上下分栏**：`Workspaces`（容器：状态点 + 标签 + `N pane · N tab · N agent` 或 cwd，行首 `▸` 可展开出它的 pane）+ `Agents`（干活的：pane 终端标题 + 状态词 + `workspace · tab N`）；两块各自滚动、可拖动分隔、各自折叠，尺寸由 VSCode 记忆 |
+| 侧栏（活动栏或第二侧栏，1.106+ 走后者） | **两个原生 view 上下分栏**：`Workspaces`（容器：状态点 + 标签 + 第二行 = **锚定目录**（有锚定时最前）+ `N pane · N tab · N agent`；两样都没有才退回显示当前 pane 的目录，行首 `▸` 可展开出它的 pane）+ `Agents`（干活的：pane 终端标题 + 状态词 + `workspace · tab N`）；两块各自滚动、可拖动分隔、各自折叠，尺寸由 VSCode 记忆 |
 | 中间区 | `herdr` 终端（编辑器区或面板，可配）；**侧栏点击 → 内嵌终端跟着切到那个 workspace**；要并存多个就 `Herdr: 在当前 workspace 新开一个终端` / `新开 herdr 终端视图`（选 workspace / tab / 另一个 session） |
 | 终端 tab 右键 | 启动 Agent（新终端）/ 在当前 workspace 新开一个终端 |
 | 状态栏 | `herdr: socket · Nws/Mpane`，点击打开终端 |
 | 内嵌终端的 herdr chrome | **全部关掉**（侧栏 / 单 tab 的 tab 行 / pane 外框），终端区就是纯终端 |
+
+### 工作目录（workspace 锚定）
+
+herdr 的 workspace **本身没有目录字段** —— 目录挂在 pane 上（`pane.cwd` / `pane.foreground_cwd`）。所以「workspace 的目录」是扩展侧的一层锚定：
+
+- **谁会被锚定**：本扩展创建的 workspace（`新建 Workspace` 用当前 VSCode 工作区目录；`启动 Agent（新终端）` 用同一个目录）在创建成功那一刻记下目录；CLI / herdr TUI 建的 workspace 默认不锚定。
+- **手动改**：workspace 右键 `设置 / 更改工作目录…`（InputBox，默认值 = 当前锚定或 VSCode 工作区目录）、`清除工作目录`（回到跟随 pane）。
+- **存哪**：`globalState`（`herdrplus.workspaceCwd`），重载窗口 / 换 VSCode 工作区都还在；快照里消失的 workspace 会立刻丢掉（herdr 会复用 `workspace_id`，留着会串目录）。
+- **怎么用**：开终端时 `terminalCwdFor()` 依次取 ① 指定了 tab → 那个 tab 当前 pane 的目录；② 否则**锚定目录**；③ 都没锚定 → 当前 pane 的目录。目录不存在（被删 / UNC 掉线）一律当没给，退回 VSCode 默认，不弹报错。
+
+没有锚定会怎样：pane 里 `cd` 一下，之后从这台 workspace 开的**每个**终端就都跑到那个目录去了 —— 锚定把「容器的位置」和「pane 的当前位置」分开；这也是 VSCode 自己「新终端用工作区目录」的直觉。
 
 ### 交互模型（一句话）
 
