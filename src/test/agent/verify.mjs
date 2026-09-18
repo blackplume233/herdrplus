@@ -9,7 +9,7 @@
  * 用法：node src/test/agent/verify.mjs [--keep]
  */
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import * as http from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -182,8 +182,17 @@ function waitForCDP(port, timeoutMs = 60_000) {
 async function main() {
   rmSync(reportsDir, { recursive: true, force: true });
   mkdirSync(reportsDir, { recursive: true });
-  const userDataDir = mkdtempSync(join(tmpdir(), 'herdrplus-qa-'));
-  const workspaceDir = mkdtempSync(join(tmpdir(), 'herdrplus-ws-'));
+  // runner 的 %TEMP% 可能是 8.3 短名（C:\Users\RUNNER~1\...），herdr 读不了这种路径下的配置 →
+  // 整份 bare 配置被忽略。测试环境先规范化成真实路径，再建 user-data-dir。
+  const tempRoot = (() => {
+    try {
+      return realpathSync.native(tmpdir());
+    } catch {
+      return tmpdir();
+    }
+  })();
+  const userDataDir = mkdtempSync(join(tempRoot, 'herdrplus-qa-'));
+  const workspaceDir = mkdtempSync(join(tempRoot, 'herdrplus-ws-'));
   // xterm 默认 canvas 渲染，读不到文本；关掉 GPU 加速改用 DOM 渲染，QA 才能断言终端内容。
   mkdirSync(join(userDataDir, 'User'), { recursive: true });
   writeFileSync(
@@ -859,15 +868,15 @@ async function main() {
     await ensureExpanded(dual.workspace_id, tab.tab_id);
     const tabRow = ops.locator(`[data-key="tab:${tab.tab_id}"]`);
     const before = await terminalTabCount();
-    // 1) 右键 → 在当前页签打开：不应新开页签
-    await tabRow.click({ button: 'right' });
+    // 1) 右键 → 在当前页签打开：不应新开页签（点 .label：行中心会被 hover 出来的 row-actions 盖住）
+    await tabRow.locator('.label').click({ button: 'right' });
     await sleep(500);
     const items = (await ops.locator('.menu .menu-item').allInnerTexts()).map((text) => text.trim());
     await ops.locator('.menu .menu-item', { hasText: '在当前页签打开' }).click();
     await sleep(3_000);
     const afterFocus = await terminalTabCount();
     // 2) 右键 → 为新页签开一个终端：页签数 +1
-    await tabRow.click({ button: 'right' });
+    await tabRow.locator('.label').click({ button: 'right' });
     await sleep(500);
     await ops.locator('.menu .menu-item', { hasText: '为新页签开一个终端' }).click();
     await sleep(6_000);
@@ -1096,7 +1105,7 @@ async function main() {
     const agentRow = opsAgents.locator('[data-key]').first();
     const paneId = (await agentRow.getAttribute('data-key')).slice(5);
     const paneRow = opsAgents.locator(`[data-key="pane:${paneId}"]`);
-    await paneRow.click({ button: 'right' });
+    await paneRow.locator('.label').click({ button: 'right' });
     await sleep(500);
     await opsAgents.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
     await sleep(1_200);
@@ -1119,7 +1128,7 @@ async function main() {
       `取消后仍是 ${afterCancel.panes.length} 个 pane`,
     );
     // 再走一次并确认：真的关掉
-    await paneRow.click({ button: 'right' });
+    await paneRow.locator('.label').click({ button: 'right' });
     await sleep(500);
     await opsAgents.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
     await sleep(1_200);
