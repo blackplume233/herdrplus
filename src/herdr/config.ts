@@ -107,7 +107,13 @@ export function writeEffectiveConfig(storageDir: string, bareTui: boolean): stri
     if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== merged) {
       fs.writeFileSync(target, merged, 'utf8');
     }
-    return target;
+    // 返回**规范化后的绝对路径**：Windows 上 $TMP 常是 8.3 短名（CI runner 的 `RUNNER~1`），
+    // herdr 读不了这种形式 → 整份配置被忽略（表现为 CI 上 tab 行/侧栏都还在）。
+    try {
+      return fs.realpathSync(target);
+    } catch {
+      return target;
+    }
   } catch {
     return undefined;
   }

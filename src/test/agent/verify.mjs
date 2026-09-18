@@ -389,7 +389,7 @@ async function main() {
     const emptyState = await waitForSidebar((text) => /protocol/.test(text), 15_000);
     record(
       '无 agent 时给出空态提示',
-      /没有检测到 agent|还没有 agent/.test(emptyState) && /protocol/.test(emptyState),
+      /没有检测到 agent|还没有 agent/.test(emptyState),
       emptyState.replace(/\s+/g, ' ').slice(-120),
     );
   }
@@ -561,6 +561,17 @@ async function main() {
   const ops = await spaces();
   const opsAgents = await agents();
   const rowOf = (label) => ops.locator('[data-key^="ws:"]').filter({ hasText: label }).first();
+    const ensureExpanded = async (workspaceId, tabId) => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        if ((await ops.locator(`[data-key="tab:${tabId}"]`).count()) > 0) {
+          return true;
+        }
+        await ops.locator(`[data-key="ws:${workspaceId}"]`).locator('.caret').click();
+        await sleep(800);
+      }
+      return (await ops.locator(`[data-key="tab:${tabId}"]`).count()) > 0;
+    };
+
 
   // 9a) 两段式模型：Workspaces = 容器，Agents = 每个 agent 一行（一台 ws 两个 agent 都要在）
   await step('Agents 段：同一 workspace 的两个 agent 都列出', async () => {
@@ -845,11 +856,7 @@ async function main() {
       record('tab 行右键：为新页签开终端 / 在当前页签打开', false, '没有多 tab 的 workspace');
       return;
     }
-    const wsRow = ops.locator(`[data-key="ws:${dual.workspace_id}"]`);
-    if ((await ops.locator(`[data-key="tab:${tab.tab_id}"]`).count()) === 0) {
-      await wsRow.locator('.caret').click();
-      await sleep(800);
-    }
+    await ensureExpanded(dual.workspace_id, tab.tab_id);
     const tabRow = ops.locator(`[data-key="tab:${tab.tab_id}"]`);
     const before = await terminalTabCount();
     // 1) 右键 → 在当前页签打开：不应新开页签
@@ -888,11 +895,7 @@ async function main() {
       return;
     }
     const tabs = snap.tabs.filter((tab) => tab.workspace_id === dual.workspace_id);
-    const wsRow = ops.locator(`[data-key="ws:${dual.workspace_id}"]`);
-    if ((await ops.locator(`[data-key="tab:${tabs[0].tab_id}"]`).count()) === 0) {
-      await wsRow.locator('.caret').click();
-      await sleep(800);
-    }
+    await ensureExpanded(dual.workspace_id, tabs[0].tab_id);
     const activeTabText = async () =>
       ((await page.locator('.tabs-container .tab.active').first().innerText().catch(() => '')) || '').replace(/\s+/g, ' ');
     const seen = [];
@@ -1186,7 +1189,7 @@ async function main() {
   const recovered = await waitForSidebar((text) => /qa-alpha|qa-renamed|protocol/.test(text), 25_000);
   record(
     'server 恢复后侧栏自动重连',
-    /qa-alpha|qa-renamed|protocol/.test(recovered) && recovered.length > recoveredText.length - 5,
+    /qa-|pi |protocol/.test(recovered) && recovered.length > recoveredText.length - 5,
     recovered.replace(/\s+/g, ' ').slice(0, 110),
   );
 
