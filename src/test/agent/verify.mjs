@@ -1059,7 +1059,15 @@ async function main() {
     await sleep(16_000);
     const after = await terminalTabCount();
     const otherText = await focusTab(`@${OTHER}`);
-    const ownText = await focusTab(/^herdr$/); // 精确匹配不带后缀的那个终端
+    // 本 session 的终端：标题里**不含** @other 的第一个（前面的步骤会开出 `herdr: <ws> · tab N` 之类的页签，
+    // 不能再假设它恰好叫 `herdr`）。
+    const ownIndex = (await tabTitles()).findIndex((title) => !title.includes(`@${OTHER}`));
+    if (ownIndex < 0) {
+      throw new Error(`没有本 session 的终端页签，当前页签：${(await tabTitles()).join(' | ') || '（无）'}`);
+    }
+    await page.locator('.tabs-container .tab').nth(ownIndex).click({ timeout: 10_000 });
+    await sleep(3_000);
+    const ownText = await visibleTerminalText();
     await shot('10e-two-sessions');
     record(
       '多 session：两个终端各显示各的（切标签读内容，互不相同）',
@@ -1074,8 +1082,17 @@ async function main() {
     // 用一个**新** workspace：pin 是 (workspace, tab) 级去重，沿用别的步骤留下的 workspace 会把
     // 「新开」变成「聚焦已有的」——测的就不是「新开」了。
     const label = `qa-pin-${Date.now().toString(36).slice(-4)}`;
-    JSON.parse(await herdr(['workspace', 'create', '--label', label, '--focus']));
+    const fresh = JSON.parse(await herdr(['workspace', 'create', '--label', label, '--focus'])).result;
+    const freshId = fresh.workspace?.workspace_id ?? fresh.root_pane?.workspace_id;
     await sleep(2_500);
+    // CLI 的 --focus 只改服务端；扩展的焦点要**在侧栏点一下**才算（否则命令作用在上一个 workspace 上）
+    const opsNow = await spaces();
+    const freshRow = opsNow.locator(`[data-key="ws:${freshId}"]`);
+    for (let attempt = 0; attempt < 10 && (await freshRow.count()) === 0; attempt++) {
+      await sleep(1_000);
+    }
+    await freshRow.locator('.row-main').click({ timeout: 10_000 });
+    await sleep(2_000);
     const pinnedTabs = () =>
       page.locator('.tabs-container .tab').filter({ hasText: new RegExp(`^herdr:\\s*${label}`) }).count();
     const before = await pinnedTabs();
