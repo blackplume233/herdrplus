@@ -103,6 +103,9 @@ async function seedAgent(name, paneId) {
   }
 }
 
+/** 当前 VS Code 页面句柄（main 里启动后登记；step() 的失败清理要用）。 */
+let livePage;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 单个步骤失败（异常/超时）只记一条 FAIL，不打断整轮 —— 否则一次 flake 会吞掉后面的全部结论。 */
@@ -112,9 +115,9 @@ async function step(name, fn) {
   } catch (error) {
     // 诊断要能看出**是哪个 locator** 超时 → 取前两段（第二段是 Playwright 的 call log）
     // 失败后先清场：否则残留的浮层/菜单会让**后续步骤**连锁失败（一个真 bug 变成五六条红）。
-    await page.keyboard.press('Escape').catch(() => {});
+    await livePage?.keyboard.press('Escape').catch(() => {});
     await sleep(400);
-    await page.keyboard.press('Escape').catch(() => {});
+    await livePage?.keyboard.press('Escape').catch(() => {});
     await sleep(200);
     const all = String(error?.message ?? error) + String(error?.stack ?? '');
     const locator = /locator\("([^"]{0,90})"\)/.exec(all)?.[1];
@@ -279,7 +282,8 @@ async function main() {
       .contexts()
       .flatMap((context) => context.pages())
       .find((candidate) => !candidate.isClosed());
-    if (!page) {
+    livePage = page;
+  if (!page) {
       await sleep(1_000);
     }
   }
