@@ -26,6 +26,22 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Verify VSCE_PAT (fail fast with a clear hint)
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::缺少仓库 secret VSCE_PAT（Settings → Secrets and variables → Actions）。"
+            exit 1
+          fi
+          publisher="$(node -p "require('./package.json').publisher")"
+          if ! npx --yes @vscode/vsce verify-pat "$publisher"; then
+            echo "::error::VSCE_PAT 不被 Marketplace 接受。检查三件事：① Organization 选 All accessible organizations（不是单个组织）② Scopes → Show all scopes → Marketplace → Manage ③ 该 PAT 属于 publisher「$publisher」的拥有者账号；粘进 secret 时不要带空格/换行。"
+            exit 1
+          fi
+          echo "PAT 校验通过：$publisher"
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
