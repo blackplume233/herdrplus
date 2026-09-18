@@ -55,12 +55,36 @@ const CODE_PROCESS = basename(CODE_EXE);
 
 const steps = [];
 let failures = 0;
+let skips = 0;
 
 function record(name, ok, detail) {
   steps.push({ name, ok, detail });
   if (!ok) failures++;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
 }
+
+/** 环境缺东西时明确 SKIP（不计失败），别把「这台机器没有 X」伪装成产品缺陷。 */
+function skip(name, reason) {
+  steps.push({ name, ok: true, detail: `SKIP ${reason}`, skipped: true });
+  skips++;
+  console.log(`SKIP  ${name} — ${reason}`);
+}
+
+/** 本机有没有可用的 agent CLI（QA 夹具用它造 agent；CI runner 上通常没有）。 */
+function hasOnPath(binary) {
+  try {
+    const finder = process.platform === 'win32' ? 'where' : 'which';
+    return execFileSync(finder, [binary], { encoding: 'utf8' })
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .some(Boolean);
+  } catch {
+    return false;
+  }
+}
+
+const AGENT_KIND = 'pi';
+const agentsAvailable = hasOnPath(AGENT_KIND);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -155,20 +179,30 @@ async function main() {
   await herdr(['workspace', 'create', '--label', 'qa-beta', '--no-focus']);
   // agent start 要求目标 pane 是可用的交互 shell：只有被聚焦/渲染过的 pane 才满足（实测）。
   const seeded = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-agent', '--focus'])).result;
-  await herdr(['agent', 'start', 'pi', '--kind', 'pi', '--pane', seeded.result?.root_pane?.pane_id ?? seeded.root_pane.pane_id]);
+  if (agentsAvailable) {
+    await herdr(['agent', 'start', 'pi', '--kind', 'pi', '--pane', seeded.result?.root_pane?.pane_id ?? seeded.root_pane.pane_id]);
+  }
   // 一台 workspace 里跑两个 agent —— 两段式侧栏（Workspaces / Agents）的核心用况
   const dual = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-dual', '--focus'])).result;
   const secondPane = JSON.parse(
     await herdr(['pane', 'split', dual.root_pane.pane_id, '--direction', 'down', '--focus']),
   ).result.pane.pane_id;
   // agent 名字在 session 内唯一，两个 pane 必须用不同 name
-  await herdr(['agent', 'start', 'qa-dual-a', '--kind', 'pi', '--pane', dual.root_pane.pane_id]);
-  await herdr(['agent', 'start', 'qa-dual-b', '--kind', 'pi', '--pane', secondPane]);
+  if (agentsAvailable) {
+    await herdr(['agent', 'start', 'qa-dual-a', '--kind', 'pi', '--pane', dual.root_pane.pane_id]);
+    await herdr(['agent', 'start', 'qa-dual-b', '--kind', 'pi', '--pane', secondPane]);
+  }
   // 专门用来验证「里面还有 agent 在跑 → 关闭前必须先确认」的 workspace
   const busy = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-busy', '--focus'])).result;
-  await herdr(['agent', 'start', 'qa-busy-a', '--kind', 'pi', '--pane', busy.result?.root_pane?.pane_id ?? busy.root_pane.pane_id]);
+  if (agentsAvailable) {
+    await herdr(['agent', 'start', 'qa-busy-a', '--kind', 'pi', '--pane', busy.result?.root_pane?.pane_id ?? busy.root_pane.pane_id]);
+  }
   await herdr(['workspace', 'focus', dual.root_pane.workspace_id]);
-  record('隔离环境就绪（5 workspace + qa-dual 内 2 个 agent）', true);
+  record(
+    '隔离环境就绪（5 workspace + qa-dual 内 2 个 pane）',
+    true,
+    agentsAvailable ? `含 ${AGENT_KIND} agent` : `本机没有 ${AGENT_KIND}：agent 相关断言将 SKIP`,
+  );
 
   const code = spawn(
     CODE_EXE,
@@ -318,8 +352,17 @@ async function main() {
   record('侧栏 webview 加载并渲染 herdr 数据', /qa-alpha/.test(first) && /qa-agent/.test(first), first.replace(/\s+/g, ' ').slice(0, 180));
   record('状态栏显示 herdr 连接状态', /herdr: socket/.test(await page.locator('.statusbar-item').filter({ hasText: 'herdr' }).first().innerText().catch(() => '')), first.replace(/\s+/g, ' ').slice(0, 60));
   // herdr 对 agent 的显示名可能是 "pi"、"π"、"π - extension" 等，只要求出现 agent 标记 + 协议号
-  const withAgent = await waitForSidebar((text) => /π|pi/i.test(text), 15_000);
-  record('侧栏显示 agent 状态与协议', /π|pi/i.test(withAgent) && /protocol/.test(withAgent), withAgent.replace(/\s+/g, ' ').slice(-120));
+  if (agentsAvailable) {
+    const withAgent = await waitForSidebar((text) => /π|pi/i.test(text), 15_000);
+    record('侧栏显示 agent 状态与协议', /π|pi/i.test(withAgent) && /protocol/.test(withAgent), withAgent.replace(/\s+/g, ' ').slice(-120));
+  } else {
+    const emptyState = await waitForSidebar((text) => /protocol/.test(text), 15_000);
+    record(
+      '无 agent 时给出空态提示',
+      /没有检测到 agent/.test(emptyState) && /protocol/.test(emptyState),
+      emptyState.replace(/\s+/g, ' ').slice(-120),
+    );
+  }
 
   // 2) bare 终端配置（无 herdr 侧栏 / tab 行 / 外框）
   const tomlPath = join(userDataDir, 'User', 'globalStorage', 'herdrplus.herdrplus', 'herdr-config.toml');
@@ -450,6 +493,9 @@ async function main() {
   record('ctrl+b 已发送到终端（截图待人工确认前缀提示）', true, '见 07-prefix-key.png');
 
   // 8) 侧栏 workspace 行 ▷ → 启动 Agent（新终端）：新 herdr workspace + 新 VSCode 终端
+  if (!agentsAvailable) {
+    skip('「启动 Agent（新终端）」新建 herdr workspace 并且 agent 真的起来了', `本机没有 ${AGENT_KIND} CLI`);
+  }
   const workspacesBefore = JSON.parse(await herdr(['workspace', 'list'])).result.workspaces.map((item) => item.workspace_id);
   const startRow = (await spaces()).locator('[data-key^="ws:"]').first();
   await startRow.hover();
@@ -485,6 +531,10 @@ async function main() {
 
   // 9a) 两段式模型：Workspaces = 容器，Agents = 每个 agent 一行（一台 ws 两个 agent 都要在）
   await step('Agents 段：同一 workspace 的两个 agent 都列出', async () => {
+    if (!agentsAvailable) {
+      skip('Agents 段列出全部 agent（含同一 workspace 内的两个）', `本机没有 ${AGENT_KIND} CLI`);
+      return;
+    }
     const agentRows = await opsAgents.locator('[data-key]').count();
     const dualRows = await opsAgents.locator('[data-key]', { hasText: 'qa-dual' }).count();
     const workspaceRows = await ops.locator('[data-key^="ws:"]').count();
@@ -497,6 +547,10 @@ async function main() {
 
   // 9b) 点 agent 行 → 聚焦它所在的 pane（终端跟随）
   await step('点 agent 行聚焦该 pane', async () => {
+    if (!agentsAvailable) {
+      skip('点 agent 行 → 聚焦该 pane 并标为当前', `本机没有 ${AGENT_KIND} CLI`);
+      return;
+    }
     const target = opsAgents.locator('[data-key]', { hasText: 'qa-dual' }).last();
     const paneId = (await target.getAttribute('data-key')).slice(5);
     await target.locator('.row-main').click();
@@ -544,6 +598,10 @@ async function main() {
 
   // 9g) agent 行右键菜单是 pane 级别
   await step('agent 行右键是 pane 菜单', async () => {
+    if (!agentsAvailable) {
+      skip('agent 行右键为 pane 级菜单（跳转/预览×2/重命名/关闭）', `本机没有 ${AGENT_KIND} CLI`);
+      return;
+    }
     const target = opsAgents.locator('[data-key]').first();
     await target.click({ button: 'right' });
     await sleep(500);
@@ -566,14 +624,28 @@ async function main() {
     const count = await target.locator('[data-action-key]').count();
     const titles = await target.locator('[data-action-key]').evaluateAll((nodes) => nodes.map((n) => n.title));
     await page.mouse.move(4, 4);
-    const agentRow = opsAgents.locator('[data-key]').first();
-    await agentRow.hover();
-    await sleep(400);
-    const agentCount = await agentRow.locator('[data-action-key]').count();
+    let paneCount = 0;
+    if (agentsAvailable) {
+      const agentRow = opsAgents.locator('[data-key]').first();
+      await agentRow.hover();
+      await sleep(400);
+      paneCount = await agentRow.locator('[data-action-key]').count();
+    } else {
+      // 没有 agent 就用 workspace 展开出来的子 pane 行验同一个契约
+      const paneRow = ops.locator('[data-key^="pane:"]').first();
+      if ((await paneRow.count()) === 0) {
+        await rowOf('qa-dual').locator('.caret').click();
+        await sleep(700);
+      }
+      const fallbackRow = ops.locator('[data-key^="pane:"]').first();
+      await fallbackRow.hover();
+      await sleep(400);
+      paneCount = await fallbackRow.locator('[data-action-key]').count();
+    }
     record(
       'workspace 行 3 个动作（新 Agent / 预览 / 关闭）、pane 行 2 个（跳转 / 预览）',
-      count === 3 && agentCount === 2,
-      `workspace ${count}：${titles.join(' / ')}；pane ${agentCount}`,
+      count === 3 && paneCount === 2,
+      `workspace ${count}：${titles.join(' / ')}；pane ${paneCount}`,
     );
   });
 
@@ -830,6 +902,11 @@ async function main() {
 
   // 9f) 破坏性操作：侧栏内联确认条（原生 modal 在 CDP 里抓不到、点不动，所以自己画确认条）
   await step('有 agent 在跑的 workspace：确认条先拦一道，确认后才关', async () => {
+    if (!agentsAvailable) {
+      skip('qa-busy 有 agent：点 ✕ 先出确认条、不直接关', `本机没有 ${AGENT_KIND} CLI`);
+      skip('确认条点「仍然关闭」才真的关掉', `本机没有 ${AGENT_KIND} CLI`);
+      return;
+    }
     const before = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
     const target = rowOf('qa-busy');
     await target.hover();
@@ -857,6 +934,10 @@ async function main() {
   });
 
   await step('确认条可以取消（取消则什么都不关）', async () => {
+    if (!agentsAvailable) {
+      skip('确认条点「取消」→ 条消失且 workspace 还在', `本机没有 ${AGENT_KIND} CLI`);
+      return;
+    }
     const before = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
     const target = rowOf('qa-agent');
     await target.hover();
@@ -903,7 +984,22 @@ async function main() {
       bar !== undefined && (await bar.isVisible()) && /关闭 pane/.test(text) && panesDuring === before,
       `确认条「${text.slice(0, 80)}」，pane 数不变 ${panesDuring}`,
     );
-    await bar.locator('[data-act="confirmPending"]').click();
+    // 先取消一次：确认条可取消，且什么都不关
+    await bar.locator('[data-act="cancelPending"]').click();
+    await sleep(1_200);
+    const afterCancel = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    record(
+      '关 pane 的确认条可以取消（pane 还在）',
+      (await bar.isHidden()) && afterCancel.panes.length === before,
+      `取消后仍是 ${afterCancel.panes.length} 个 pane`,
+    );
+    // 再走一次并确认：真的关掉
+    await paneRow.click({ button: 'right' });
+    await sleep(500);
+    await ops.locator('.menu .menu-item', { hasText: '关闭 pane' }).click();
+    await sleep(1_200);
+    const barAgain = await confirmBar();
+    await barAgain.locator('[data-act="confirmPending"]').click();
     await sleep(3_000);
     const after = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
     record(
