@@ -129,7 +129,8 @@ await spacesFrame.waitForSelector('[data-key]').catch(() => {});
 for (const handle of page.frames().filter((f) => f !== page.mainFrame())) {
   await handle.evaluate((data) => {
     window.postMessage({ type: 'state', state: { kind: 'ready', transport: 'socket', version: '0.9.1', protocol: 22 }, sort: 'attention' }, '*');
-    window.postMessage({ type: 'snapshot', snapshot: data }, '*');
+    // 预览里给一台 workspace 一个锚定目录，好让「工作目录」那一行也进画面（真机上是创建时记下的）。
+    window.postMessage({ type: 'snapshot', snapshot: data, anchors: { wY: 'G:\\Workspace\\code\\agentcraft' } }, '*');
   }, snapshot);
 }
 if (expandAll) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- **树缩进不再写死像素**：原来父/子/孙三层各有一份硬编码 `padding-left`（40px / 62px），加一层或改基础内边距就会串位。现在缩进 = `--hp-row-pad + 层级 × --hp-indent`，层级由渲染层写在行上的 `--depth` 决定；三层版式尺寸（行高 / 左侧基准 / caret 槽宽 / 每层缩进）集中在 `:root`，改版式只动那几个数。
+- **修掉「子项比父项偏左」的真因**：叶子行的 caret 用了 `hidden` 属性，而 `<button>[hidden]` 的 UA 规则会 `display: none` 把槽位吃掉 —— 父行有 caret、子行没有，dot 就错位。改成 `.is-leaf` 类（`visibility: hidden` + `pointer-events: none`，同时 `tabIndex=-1`/`aria-hidden`），**每一层都占同一个 caret 槽**。实测三层 dot 由 26 / 42 / 58 等距排开（每层 +16px，dot/label/caret 三者一致）。
+- QA：新增「树缩进由层级算出（每层等距、叶子行占 caret 槽）」断言；离线预览注入一台锚定 workspace，`工作目录` 也进画面。
+
 ## 0.1.2
 
 - **workspace 有工作目录了（锚定，不随 pane 漂）**：本扩展创建的 workspace 在创建那刻记下目录（`新建 Workspace` = 当前 VSCode 工作区目录，`启动 Agent（新终端）` 同上），之后**从它开的每个终端都从这里起**；pane 里 `cd` 过也不影响。没锚定的 workspace 保持老行为（跟着当前 pane 的目录），所以 CLI / herdr TUI 建的 workspace 行为不变。

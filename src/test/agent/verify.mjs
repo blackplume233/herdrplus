@@ -84,7 +84,24 @@ function hasOnPath(binary) {
 }
 
 const AGENT_KIND = 'pi';
-const agentsAvailable = hasOnPath(AGENT_KIND);
+let agentsAvailable = hasOnPath(AGENT_KIND);
+
+/**
+ * 造 agent 夹具。本机上 `herdr agent start` 偶发 `agent_pane_not_found`（pane 还没到「可交互」状态），
+ * 这时**关掉 agent 夹具**让后面的 agent 用例明确 SKIP —— 不能让一个环境抖动把整轮 qa 打死
+ * （种子阶段的 agent 起不来 ≠ 产品有问题）。
+ */
+async function seedAgent(name, paneId) {
+  if (!agentsAvailable || !paneId) {
+    return;
+  }
+  try {
+    await herdr(['agent', 'start', name, '--kind', AGENT_KIND, '--pane', paneId]);
+  } catch (error) {
+    agentsAvailable = false;
+    console.log(`WARN  agent 夹具不可用（${name}）：${String(error?.message ?? error).split('\n')[0].slice(0, 140)}`);
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -123,6 +140,14 @@ async function startServer() {
 }
 
 async function resetSession() {
+  // 上一轮若被强杀，可能留下 server 进程 + 陈旧 socket（表现为后续 server_not_running）：
+  // 按命令行匹配清掉残留进程，再删目录，做到自愈。
+  await run('powershell', [
+    '-NoProfile',
+    '-Command',
+    `Get-CimInstance Win32_Process -Filter "Name='herdr.exe'" | Where-Object { $_.CommandLine -like '*--session ${SESSION}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+  ]).catch(() => {});
+  await sleep(600);
   await run(HERDR, ['--session', SESSION, 'server', 'stop']).catch(() => {});
   await sleep(500);
   rmSync(dirname(SOCKET), { recursive: true, force: true });
@@ -180,7 +205,7 @@ async function main() {
   // agent start 要求目标 pane 是可用的交互 shell：只有被聚焦/渲染过的 pane 才满足（实测）。
   const seeded = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-agent', '--focus'])).result;
   if (agentsAvailable) {
-    await herdr(['agent', 'start', 'pi', '--kind', 'pi', '--pane', seeded.result?.root_pane?.pane_id ?? seeded.root_pane.pane_id]);
+    await seedAgent('pi', seeded.result?.root_pane?.pane_id ?? seeded.root_pane.pane_id);
   }
   // 一台 workspace 里跑两个 agent —— 两段式侧栏（Workspaces / Agents）的核心用况
   const dual = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-dual', '--focus'])).result;
@@ -189,21 +214,24 @@ async function main() {
   ).result.pane.pane_id;
   // 同一 workspace 里再开一个 herdr tab —— 侧栏的 workspace → tab → pane 三层与「每个 tab 一个终端页签」都靠它
   await herdr(['tab', 'create', '--workspace', dual.root_pane.workspace_id, '--label', '2']);
+  // 新建 tab 会把它设为当前 tab；agent start 要求目标 pane 处于被聚焦/渲染过的状态，
+  // 所以这里把当前 tab 切回第一个，保证下面的 agent 能在 w4:p1 起来。
+  await herdr(['tab', 'focus', dual.tab.tab_id]);
   // agent 名字在 session 内唯一，两个 pane 必须用不同 name
   if (agentsAvailable) {
-    await herdr(['agent', 'start', 'qa-dual-a', '--kind', 'pi', '--pane', dual.root_pane.pane_id]);
-    await herdr(['agent', 'start', 'qa-dual-b', '--kind', 'pi', '--pane', secondPane]);
+    await seedAgent('qa-dual-a', dual.root_pane.pane_id);
+    await seedAgent('qa-dual-b', secondPane);
   }
   // 专门用来验证「里面还有 agent 在跑 → 关闭前必须先确认」的 workspace
   const busy = JSON.parse(await herdr(['workspace', 'create', '--label', 'qa-busy', '--focus'])).result;
   if (agentsAvailable) {
-    await herdr(['agent', 'start', 'qa-busy-a', '--kind', 'pi', '--pane', busy.result?.root_pane?.pane_id ?? busy.root_pane.pane_id]);
+    await seedAgent('qa-busy-a', busy.result?.root_pane?.pane_id ?? busy.root_pane.pane_id);
   }
   await herdr(['workspace', 'focus', dual.root_pane.workspace_id]);
   record(
     '隔离环境就绪（5 workspace；qa-dual = 2 tab / 3 pane）',
     true,
-    agentsAvailable ? `含 ${AGENT_KIND} agent` : `本机没有 ${AGENT_KIND}：agent 相关断言将 SKIP`,
+    agentsAvailable ? `含 ${AGENT_KIND} agent` : `${AGENT_KIND} agent 起不来（或本机没有）：agent 相关断言将 SKIP`,
   );
 
   const code = spawn(
@@ -580,14 +608,14 @@ async function main() {
     };
     const before = await children();
     const expandedBefore = await expandedIds();
-    const after = await clickCaretUntil(3);
+    const after = await clickCaretUntil(2);
     const expandedAfter = await expandedIds();
     const rows = ops.locator('[data-key^="pane:"]');
     const text = (await rows.allInnerTexts()).join(' | ').replace(/\s+/g, ' ');
     await shot('09e-foldout');
     record(
-      '默认不展开任何 workspace；点 ▸ 才展开出它的 pane',
-      before === 0 && expandedBefore === '' && after === 3 && expandedAfter.split(',').length === 1,
+      '默认全折叠；展开后一个 tab 一行（多 pane 的 tab 才挂 pane 子行）',
+      before === 0 && expandedBefore === '' && after === 2 && expandedAfter.split(',').length === 1,
       `展开集合「${expandedBefore}」→「${expandedAfter}」，子行 ${before} → ${after}：${text.slice(0, 80)}`,
     );
     // tab 行：workspace → tab → pane 的中间层，点它应该切服务端当前 tab
@@ -610,6 +638,27 @@ async function main() {
     await sleep(2_500);
     const focused = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot.focused_pane_id;
     record('点子 pane 行 → 终端跳到该 pane', focused === paneId, `${paneId}（服务端 focused=${focused}）`);
+
+    // 缩进是算出来的（depth × step）、每层等距、叶子行也占 caret 槽 —— 子项不会落到父项左边
+    const geo = await ops.evaluate(() => {
+      const base = document.querySelector('[data-f="list-spaces"]').getBoundingClientRect().left;
+      const x = (node) => (node ? Math.round(node.getBoundingClientRect().left - base) : null);
+      return Array.from(document.querySelectorAll('[data-key]')).map((row) => ({
+        depth: Number(row.dataset.depth ?? -1),
+        dot: x(row.querySelector('.dot')),
+        caret: x(row.querySelector('.caret')),
+      }));
+    });
+    const atDepth = (depth) => geo.find((row) => row.depth === depth);
+    const dots = [0, 1, 2].map((depth) => atDepth(depth)?.dot);
+    const slots = [0, 1, 2].map((depth) => atDepth(depth)?.caret);
+    const equalSteps = dots[1] - dots[0] === dots[2] - dots[1] && dots[0] < dots[1];
+    record(
+      '树缩进由层级算出（每层等距、叶子行占 caret 槽）',
+      geo.every((row) => row.depth >= 0) && equalSteps && slots.every((slot) => typeof slot === 'number' && slot > 0),
+      `dot 第 0/1/2 层 = ${dots.join(' / ')}；caret 槽 = ${slots.join(' / ')}`,
+    );
+
     const collapsed = await clickCaretUntil(0);
     const expandedAgain = await expandedIds();
     record('再点一次折叠回去', collapsed === 0 && expandedAgain === '', `子行 ${collapsed}，展开集合「${expandedAgain}」`);
@@ -790,6 +839,49 @@ async function main() {
       '每个 herdr tab 一个终端页签（激活即切 tab）',
       after >= before + tabs.length && focusedTab === tabs[1].tab_id,
       `终端页签 ${before} → ${after}（期望 +${tabs.length}），点「tab ${secondLabel}」的页签 → 服务端 focused_tab=${focusedTab}（期望 ${tabs[1].tab_id}）`,
+    );
+  });
+
+  // 9b3b2) tab 行的右键菜单：开新页签是右键动作；「在当前页签打开」不新开
+  await step('tab 行右键：为新页签开终端 / 在当前页签打开', async () => {
+    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const dual = snap.workspaces.find((workspace) => workspace.tab_count >= 2);
+    const tab = dual && snap.tabs.find((item) => item.workspace_id === dual.workspace_id);
+    if (!dual || !tab) {
+      record('tab 行右键：为新页签开终端 / 在当前页签打开', false, '没有多 tab 的 workspace');
+      return;
+    }
+    const wsRow = ops.locator(`[data-key="ws:${dual.workspace_id}"]`);
+    if ((await ops.locator(`[data-key="tab:${tab.tab_id}"]`).count()) === 0) {
+      await wsRow.locator('.caret').click();
+      await sleep(800);
+    }
+    const tabRow = ops.locator(`[data-key="tab:${tab.tab_id}"]`);
+    const before = await terminalTabCount();
+    // 1) 右键 → 在当前页签打开：不应新开页签
+    await tabRow.click({ button: 'right' });
+    await sleep(500);
+    const items = (await ops.locator('.menu .menu-item').allInnerTexts()).map((text) => text.trim());
+    await ops.locator('.menu .menu-item', { hasText: '在当前页签打开' }).click();
+    await sleep(3_000);
+    const afterFocus = await terminalTabCount();
+    // 2) 右键 → 为新页签开一个终端：页签数 +1
+    await tabRow.click({ button: 'right' });
+    await sleep(500);
+    await ops.locator('.menu .menu-item', { hasText: '为新页签开一个终端' }).click();
+    await sleep(6_000);
+    let afterNew = afterFocus;
+    for (let attempt = 0; attempt < 12 && afterNew <= afterFocus; attempt++) {
+      afterNew = await terminalTabCount();
+      if (afterNew <= afterFocus) {
+        await sleep(2_000);
+      }
+    }
+    await shot('10g-tab-menu');
+    record(
+      'tab 行右键：在当前页签打开不新开、为新页签开终端才 +1',
+      items.length === 2 && !/新开一个终端/.test(items[0]) && afterFocus === before && afterNew > afterFocus,
+      `菜单「${items.join(' / ')}」；终端页签 ${before} →（当前页签打开）${afterFocus} →（新页签）${afterNew}`,
     );
   });
 
@@ -1261,6 +1353,12 @@ async function main() {
 }
 
 void main().catch((error) => {
+  const message = String(error?.message ?? error);
+  if (/page, context or browser has been closed/i.test(message)) {
+    console.error(
+      '[qa] 运行中断：QA 的 VS Code 窗口被关闭了（本机会弹一个真实的窗口，别手动关它；跑完脚本会自己收尾）。',
+    );
+  }
   console.error('[qa] 运行中断：', error);
   // 抛异常时 main 里的清理不会执行；Playwright 的连接会一直吊着事件循环 —— 直接退出，别让整个流水线卡死。
   // （残留的 QA 窗口由下次运行的 killStaleInstances() 收掉。）

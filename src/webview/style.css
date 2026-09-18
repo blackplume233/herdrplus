@@ -1,5 +1,9 @@
 :root {
   --hp-row-height: 24px;
+  /* 版式尺寸集中在这里：行高、左侧基准、caret 槽宽、每层缩进 —— 改版式只动这四个数。 */
+  --hp-row-pad: 6px;
+  --hp-caret-slot: 14px;
+  --hp-indent: 16px;
 }
 
 * {
@@ -91,7 +95,8 @@ button:hover {
   align-items: center;
   gap: 6px;
   min-height: var(--hp-row-height);
-  padding: 0 6px 0 6px;
+  /* 缩进跟着层级走：workspace 0 / tab 1 / pane 2（层级写在行上的 --depth） */
+  padding: 0 6px 0 calc(var(--hp-row-pad) + var(--depth, 0) * var(--hp-indent));
   cursor: pointer;
 }
 
@@ -349,12 +354,13 @@ footer {
   color: var(--vscode-charts-orange);
 }
 
-/* 可展开的 workspace 行 + 子 pane 行 */
+/* 树形层级：缩进 = --hp-row-pad + 层级 × --hp-indent，层级由渲染层写在行上（`--depth`）。
+   每一层都要占同一个 caret 槽（叶子行只是看不见），否则父行的 caret 会把它的 dot 顶到子行右边。 */
 .row .caret {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
+  width: var(--hp-caret-slot);
   height: 14px;
   flex: 0 0 auto;
   padding: 0;
@@ -368,24 +374,15 @@ footer {
   display: block;
 }
 
-/* 树形层级：workspace（dot 26px）→ tab（40px）→ pane（62px）。
-   父行有 caret 槽（14px + 6px gap），子行没有，所以用 padding 把 dot 顶到更深的位置：
-   子项的 dot 永远在父项 dot 右侧，不会出现「子项比父项更靠左」。 */
-.tab-row.child {
-  padding-left: 40px;
-}
-
-.pane-row.child {
-  padding-left: 62px;
-}
-
 .tab-row .label {
   font-weight: 500;
 }
 
-/* hidden 的 caret 必须真的不占位：否则按钮的 display 会盖掉 UA 的 [hidden] 规则 */
-.row .caret[hidden] {
-  display: none;
+/* 叶子行：caret 只留槽位（不能用 `hidden` 属性 —— 按钮上的 `[hidden]` 会被 UA 的
+   `display: none` 吃掉槽位，dot 就会比父行靠左），并且不可点、不进 tab 序。 */
+.row .caret.is-leaf {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .pane-row.child .label {

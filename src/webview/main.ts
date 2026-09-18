@@ -10,7 +10,7 @@ interface HostApi {
 declare function acquireVsCodeApi(): HostApi;
 
 type SortMode = 'number' | 'attention';
-type TargetKind = 'workspace' | 'pane';
+type TargetKind = 'workspace' | 'tab' | 'pane';
 
 /** 排序模式之外，视图还从宿主收到「workspace → 锚定工作目录」（未锚定的不在表里）。 */
 type Anchors = Record<string, string>;
@@ -50,6 +50,8 @@ interface ActionModel {
 interface RowModel {
   key: string;
   className: string;
+  /** 树层级：workspace = 0，tab = 1，tab 下的 pane = 2；缩进由它算，不写死像素。 */
+  depth: number;
   status: string;
   statusTitle: string;
   label: string;
@@ -202,8 +204,8 @@ function onContextMenu(event: MouseEvent): void {
     return;
   }
   event.preventDefault();
-  const kind: TargetKind = key.startsWith('pane:') ? 'pane' : 'workspace';
-  const id = key.slice(kind === 'pane' ? 5 : 3);
+  const kind: TargetKind = key.startsWith('pane:') ? 'pane' : key.startsWith('tab:') ? 'tab' : 'workspace';
+  const id = key.slice(key.indexOf(':') + 1);
   menu = { kind, id, label: row.querySelector('.label')?.textContent ?? id, x: event.clientX, y: event.clientY };
   scheduleRender();
 }
@@ -401,6 +403,7 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
     const isOpen = expanded.has(workspace.workspace_id);
     models.push({
       key: `ws:${workspace.workspace_id}`,
+      depth: 0,
       className: `row ws-row${currentIds.includes(workspace.workspace_id) ? ' current' : ''}${workspace.agent_status === 'blocked' ? ' blocked' : ''}`,
       status: `dot status-${workspace.agent_status}`,
       statusTitle: STATUS_TEXT[workspace.agent_status] || '未知',
@@ -422,31 +425,37 @@ function workspaceRows(current: SessionSnapshot): RowModel[] {
     if (!isOpen) {
       continue;
     }
-    // 一个 workspace 的多个 herdr tab = 侧栏里的多个子节点（对应多个终端页签）；每个 tab 下挂它的 pane。
+    // 一个 herdr tab = 一行「终端」（label 用它的 pane 标题）—— 1 tab 1 pane 时不再多一层。
+    // 只有多 pane 的 tab 才把 pane 挂出来（要精确跳转/关闭某个 pane 时才需要）。
+    // 开新页签是**右键**动作（hover 只做「切过去」），免得列表里到处是「开」按钮。
     for (const tab of current.tabs.filter((item) => item.workspace_id === workspace.workspace_id)) {
       const tabPanes = panes.filter((pane) => pane.tab_id === tab.tab_id);
+      const active = tabPanes.find((pane) => pane.focused) ?? tabPanes[0];
+      const multi = tabPanes.length > 1;
       models.push({
         key: `tab:${tab.tab_id}`,
+        depth: 1,
         className: `row tab-row child${currentIds.includes(tab.tab_id) ? ' current' : ''}${
           tabPanes.some((pane) => pane.agent_status === 'blocked') ? ' blocked' : ''
         }`,
-        status: `dot status-${tabPanes[0]?.agent_status ?? 'unknown'}`,
-        statusTitle: `${tabPanes.length} pane`,
-        label: `tab ${tab.label}`,
-        detail: tabPanes.length > 1 ? `${tabPanes.length} pane` : '',
-        context: '',
+        status: `dot status-${active?.agent_status ?? 'unknown'}`,
+        statusTitle: STATUS_TEXT[active?.agent_status ?? 'unknown'] || '未知',
+        label: active?.terminal_title_stripped ?? active?.title ?? `tab ${tab.label}`,
+        detail: multi ? `${tabPanes.length} pane` : shortPath(active?.foreground_cwd ?? active?.cwd ?? ''),
+        context: `tab ${tab.label}`,
         actions: [
-          { act: 'focusTab', id: tab.tab_id, title: '在 herdr 终端里切到这个 tab', icon: 'terminal' },
           {
-            act: 'openTerminalForTab',
+            act: 'focusTab',
             id: tab.tab_id,
-            title: '为这个 tab 新开一个终端页签（激活即切过去）',
-            icon: 'terminalNew',
+            title: '在当前页签打开：切 herdr 到这个 tab（不新开页签）',
+            icon: 'terminal',
           },
         ],
       });
-      for (const pane of tabPanes) {
-        models.push(paneRow(current, pane, true));
+      if (multi) {
+        for (const pane of tabPanes) {
+          models.push(paneRow(current, pane, true));
+        }
       }
     }
   }
@@ -470,6 +479,7 @@ function paneRow(current: SessionSnapshot, pane: PaneInfo, child: boolean): RowM
   const showsName = Boolean(name) && !title.startsWith(name);
   return {
     key: `pane:${pane.pane_id}`,
+    depth: child ? 2 : 0,
     className: `row pane-row${child ? ' child' : ' agent-row'}${currentIds.includes(pane.pane_id) ? ' current' : ''}${pane.agent_status === 'blocked' ? ' blocked' : ''}`,
     status: `dot status-${pane.agent_status}`,
     statusTitle: statusText || '未知',
@@ -576,6 +586,11 @@ function createRow(model: RowModel): HTMLElement {
 
 function updateRow(node: HTMLElement, model: RowModel): void {
   applyClass(node, model.className);
+  // 缩进是算出来的（padding-left: base + depth × step），不是每层一个写死的 padding。
+  if (node.dataset.depth !== String(model.depth)) {
+    node.dataset.depth = String(model.depth);
+    node.style.setProperty('--depth', String(model.depth));
+  }
   const dot = node.querySelector<HTMLElement>('.dot');
   if (dot) {
     applyClass(dot, model.status);
@@ -584,7 +599,11 @@ function updateRow(node: HTMLElement, model: RowModel): void {
   const caret = node.querySelector<HTMLElement>('.caret');
   if (caret) {
     const glyph = model.caret?.glyph;
-    caret.hidden = !glyph;
+    // 不用 `hidden` 属性：按钮上的 `[hidden]` 会被 UA 的 `display: none` 吃掉槽位，
+    // 而槽位必须保留 —— 每个层级都占同一个 caret 槽，dot 才会层层向右（见 style.css）。
+    caret.classList.toggle('is-leaf', !glyph);
+    caret.setAttribute('aria-hidden', glyph ? 'false' : 'true');
+    caret.tabIndex = glyph ? 0 : -1;
     if (glyph) {
       applyIcon(caret, glyph);
     }
@@ -640,7 +659,12 @@ function renderMenu(): void {
     return;
   }
   const items: MenuItemModel[] =
-    menu.kind === 'pane'
+    menu.kind === 'tab'
+      ? [
+          { act: 'focusTab', label: '在当前页签打开（切 herdr 到这个 tab）', icon: 'terminal' },
+          { act: 'openTerminalForTab', label: '为新页签开一个终端（钉在这个 tab）', icon: 'terminalNew' },
+        ]
+      : menu.kind === 'pane'
       ? [
           { act: 'focusPane', label: '在 herdr 终端里跳到这个 pane', icon: 'terminal' },
           { act: 'renamePane', label: '重命名 pane…', icon: 'rename' },

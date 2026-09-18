@@ -21,7 +21,7 @@ herdr 的 TUI 仍是真的（ConPTY 里跑 `herdr.exe`），扩展只做外骨�
 | **点 tab 行主体** | 切到该 tab（服务端 `tab.focus`） | 同上：亮出**钉在这个 (workspace, tab) 的终端** —— 一个 tab 一个页签，点哪个亮哪个 |
 | **点 pane 行主体** | 跳到那个 pane | 同上：亮出它所属 tab 的终端 |
 | **点 pane 行主体**（Agents view 任意行、workspace 展开后的子行） | 跳到那个 pane | 同上；`focusPane` → 服务端 `focused_pane_id` |
-| **行首 `▸/▾`**（workspace 行） | 展开/折叠：**workspace → tab → pane** 三层（tab = herdr 的「终端」，一行一个；每个 tab 下挂它的 pane） | 展开集合按 webview 记忆；默认全折叠。点 tab 行 = 切服务端当前 tab |
+| **行首 `▸/▾`**（workspace 行） | 展开/折叠：**workspace → tab → pane** 三层（tab = herdr 的「终端」，一行一个；每个 tab 下挂它的 pane） | 展开集合按 webview 记忆；默认全折叠。点 tab 行 = 切服务端当前 tab。**缩进是算出来的**：`padding-left = --hp-row-pad + 层级 × --hp-indent`（层级由渲染层写在行上的 `--depth`），每层等距、叶子行也占 caret 槽 —— 加一层不用改 CSS，也不会出现「子项跑到父项左边」 |
 | tab 行 hover：`▣` / `▣⁺` | 在 herdr 终端里切到这个 tab / **为这个 tab 新开一个终端页签**（激活即切过去） | 一个 herdr tab ↔ 一个 VSCode 终端页签 |
 | workspace 行右键：`▣⁺ 为每个 tab 各开一个终端页签` | 一次把这个 workspace 的每个 herdr tab 各开成一个终端页签 | 页签栏就是她的 tab 列表 |
 | **当前标识**（侧栏里唯一的强标识） | — | 左侧 2px accent 竖条 + 选中底色 + 标签加粗 —— 只表示「终端正在显示它」 |
