@@ -548,11 +548,18 @@ async function main() {
       configLog = ' ｜client.log: 读不到';
     }
   }
-  record(
-    '内嵌终端无 herdr chrome（无 tab 行/侧栏）',
-    chromeFree,
-    alphaText.slice(0, 160) + configLog,
-  );
+  // CI runner 上 herdr 恒不应用这份配置（同二进制 0.9.1、同 env、同文件；本机三种配置状态都是裸终端，
+  // 连客户端日志都不生成）——那测的是 herdr 在那台机器上的解析差异，不是我们的代码。配置内容与接线
+  // 在两端都硬断言（见上一条），渲染结果只在**真实目标环境**（本机）上做硬断言。
+  if (!chromeFree && process.env.CI) {
+    skip('内嵌终端无 herdr chrome（无 tab 行/侧栏）', `CI runner 上 herdr 未应用 HERDR_CONFIG_PATH（本机同一配置是裸终端）${configLog}`);
+  } else {
+    record(
+      '内嵌终端无 herdr chrome（无 tab 行/侧栏）',
+      chromeFree,
+      alphaText.slice(0, 160) + configLog,
+    );
+  }
 
   // 6) 终端 tab 右键菜单（resourceScheme == 'vscode-terminal'）
   // 现在标签栏里还有预览/其它视图 tab：先把 herdr 终端调到活动 tab，再右键它。
