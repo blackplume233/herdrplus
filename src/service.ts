@@ -879,7 +879,10 @@ export class HerdrService implements vscode.Disposable {
 
   /** 在当前 workspace 上另开一个终端（不用选：目标就是服务端当前 focus 的 workspace）。 */
   async newTerminalHere(): Promise<void> {
-    const target = this.snapshot?.focused_workspace_id ?? undefined;
+    // 「当前 workspace」要现读：刚点过侧栏行 / CLI 刚 `--focus` 过时，本地快照还是旧的，
+    // 会开到**上一个** workspace 上去（终端名字能看出来）。
+    await this.refresh();
+    const target = this.snapshot?.focused_workspace_id ?? this.selectedWorkspaceId ?? undefined;
     this.openClient({ fresh: true, target });
     if (target) {
       await this.focus('workspace', target);
