@@ -1045,11 +1045,17 @@ async function main() {
       }
     }
     await shot('11d-open-without-terminal');
-    record(
-      '没有 herdr 终端时点行会自动开一个',
-      after > 0,
-      `清空后 ${before} 个终端 → 点「${label}」→ ${after} 个`,
-    );
+    if (before !== 0) {
+      // `Terminal: Kill All` 只清掉了面板终端（编辑器区的终端还在）→ 「清空后点行」这个前提不成立，
+      // 这时硬判会变成空过，明确 SKIP 而不是记一个假的 PASS。
+      skip('没有 herdr 终端时点行会自动开一个', `清空后仍有 ${before} 个终端页签（Kill All 没清掉编辑器区终端）`);
+    } else {
+      record(
+        '没有 herdr 终端时点行会自动开一个',
+        after > 0,
+        `清空后 0 个终端 → 点「${label}」→ ${after} 个`,
+      );
+    }
   });
 
   // 9b3c) 点哪一行，就亮出哪一行的终端（精准，不靠「切焦点让所有终端一起变」）
