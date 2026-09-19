@@ -1168,6 +1168,9 @@ async function main() {
     }
     await freshRow.locator('.row-main').click({ timeout: 10_000 });
     await sleep(2_000);
+    // 点行本身可能已经开了一个（「没有终端就开一个」契约）——先清空，再验「命令会不会新开」。
+    await runCommand('Terminal: Kill All', 2_500);
+    await sleep(2_500);
     const pinnedTabs = () =>
       page.locator('.tabs-container .tab').filter({ hasText: new RegExp(`^herdr:\\s*${label}`) }).count();
     const before = await pinnedTabs();
