@@ -8,6 +8,10 @@
 - **开新页签改成右键动作**：tab 行右键 → `在当前页签打开（切 herdr 到这个 tab，不新开）` / `为新页签开一个终端（钉在这个 tab）`；行内不再有「开」按钮（hover 只做「切过去」）。tab 行也需要自己的 target 类型，否则右键会落到 workspace 菜单上。
 - QA：新增「tab 行右键：在当前页签打开不新开 / 为新页签开终端才 +1」断言；fixture 建完 tab 要切回原 tab（新建 tab 会成为当前 tab，导致 `agent start` 的目标 pane 不再被渲染而失败）；`resetSession` 自愈（清残留 herdr server + 陈旧 socket，避免 `server_not_running` 连锁）；窗口被关掉时给出明确提示。
 - QA：新增「树缩进由层级算出（每层等距、叶子行占 caret 槽）」断言；离线预览注入一台锚定 workspace，`工作目录` 也进画面。
+- **修掉「选了菜单项菜单不消失」**：`focusTab` / `openTerminalForTab` 两个分支 `return` 前漏了 `closeMenu()`，菜单会留在原地盖住下面的行（第二次右键直接点不中）。现在**任何**菜单项一旦选中就收起（QA 新增断言钉住）。
+- **交给 herdr 的配置路径不再用 8.3 短名**：`writeEffectiveConfig()` 返回 `realpathSync()` 规范化后的绝对路径（`%TEMP%` 是 `RUNNER~1` 这类短名时 herdr 读不了那份配置，整份被忽略）。
+- **CLI 调用也带 `HERDR_CONFIG_PATH`**：扩展自己发的每次 herdr CLI 调用都可能正是「拉起该 session server」的那一次，配置要一致。
+
 
 ## 0.1.2
 
