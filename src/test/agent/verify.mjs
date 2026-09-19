@@ -510,7 +510,9 @@ async function main() {
       return;
     }
     const before = await page.locator('.tabs-container .tab').count();
-    await ops.locator(`[data-key="ws:${target.workspace_id}"]`).locator('.row-main').click({ timeout: 8_000 });
+    // 这步跑在 `ops` 初始化之前（TDZ：以前这里直接抛 ReferenceError，整条断言等于没跑）
+    const opsNow = await spaces();
+    await opsNow.locator(`[data-key="ws:${target.workspace_id}"]`).locator('.row-main').click({ timeout: 8_000 });
     await sleep(5_000);
     await shot('04b-reveal-without-terminal');
     const after = await page.locator('.tabs-container .tab').count();
@@ -1126,7 +1128,12 @@ async function main() {
     await page.keyboard.press('Enter');
     await sleep(16_000);
     const after = await terminalTabCount();
-    const otherText = await focusTab(`@${OTHER}`);
+    const otherText0 = await focusTab(`@${OTHER}`);
+    let otherText = otherText0;
+    for (let attempt = 0; attempt < 10 && !new RegExp(marker).test(otherText); attempt++) {
+      await sleep(2_000);
+      otherText = await visibleTerminalText();
+    }
     // 本 session 的终端：标题里**不含** @other 的第一个（前面的步骤会开出 `herdr: <ws> · tab N` 之类的页签，
     // 不能再假设它恰好叫 `herdr`）。
     const ownIndex = (await tabTitles()).findIndex((title) => !title.includes(`@${OTHER}`));
