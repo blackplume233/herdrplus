@@ -1154,25 +1154,15 @@ async function main() {
 
   // 9c0) 一键：在当前 workspace 新开一个终端
   await step('在当前 workspace 新开一个终端', async () => {
-    // 用一个**新** workspace：pin 是 (workspace, tab) 级去重，沿用别的步骤留下的 workspace 会把
-    // 「新开」变成「聚焦已有的」——测的就不是「新开」了。
-    const label = `qa-pin-${Date.now().toString(36).slice(-4)}`;
-    const fresh = JSON.parse(await herdr(['workspace', 'create', '--label', label, '--focus'])).result;
-    const freshId = fresh.workspace?.workspace_id ?? fresh.root_pane?.workspace_id;
-    await sleep(2_500);
-    // CLI 的 --focus 只改服务端；扩展的焦点要**在侧栏点一下**才算（否则命令作用在上一个 workspace 上）
-    const opsNow = await spaces();
-    const freshRow = opsNow.locator(`[data-key="ws:${freshId}"]`);
-    for (let attempt = 0; attempt < 10 && (await freshRow.count()) === 0; attempt++) {
-      await sleep(1_000);
-    }
-    await freshRow.locator('.row-main').click({ timeout: 10_000 });
-    await sleep(2_000);
-    // 点行本身可能已经开了一个（「没有终端就开一个」契约）——先清空，再验「命令会不会新开」。
+    // 「当前 workspace」以**服务端焦点**为准：命令就是按它开终端（点侧栏行 / CLI `--focus` 谁最后生效
+    // 由服务端决定），测试不能替服务端假设。
+    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const focused = snap.workspaces.find((workspace) => workspace.workspace_id === snap.focused_workspace_id);
+    const label = focused?.label ?? '';
+    // 先清空：这样「before → after」不受前面步骤留下的页签影响（也顺带验一次命令真的会新开）
     await runCommand('Terminal: Kill All', 2_500);
     await sleep(2_500);
-    const pinnedTabs = () =>
-      page.locator('.tabs-container .tab').filter({ hasText: new RegExp(`^herdr:\\s*${label}`) }).count();
+    const pinnedTabs = () => page.locator('.tabs-container .tab').filter({ hasText: new RegExp(`^herdr:\\s*${label}`) }).count();
     const before = await pinnedTabs();
     await runCommand('Herdr: 在当前 workspace 新开一个终端', 6_000);
     let after = before;
@@ -1185,8 +1175,8 @@ async function main() {
     await shot('11c-terminal-here');
     record(
       '「在当前 workspace 新开一个终端」新增一个钉在该 workspace 的终端页签',
-      after > before && label.length > 0,
-      `${label}：终端页签 ${before} → ${after}；当时页签：${(await tabTitles()).join(' / ') || '（无）'}`,
+      label.length > 0 && after > before,
+      `焦点 workspace「${label}」：终端页签 ${before} → ${after}；当时页签：${(await tabTitles()).join(' / ') || '（无）'}`,
     );
   });
 
