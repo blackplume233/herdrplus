@@ -92,12 +92,21 @@ button:hover {
 .row {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
   min-height: var(--hp-row-height);
   /* 缩进跟着层级走：workspace 0 / tab 1 / pane 2（层级写在行上的 --depth） */
-  padding: 0 6px 0 calc(var(--hp-row-pad) + var(--depth, 0) * var(--hp-indent));
+  padding: 3px 6px 3px calc(var(--hp-row-pad) + var(--depth, 0) * var(--hp-indent));
   cursor: pointer;
+}
+
+/* 第一行 = 谁（caret + 状态点 + 标题 + 行内动作）；第二行 = 参数（见 .row-sub） */
+.row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .row:hover {
@@ -131,7 +140,7 @@ button:hover {
 
 .row-main {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
@@ -145,29 +154,26 @@ button:hover {
   white-space: nowrap;
 }
 
-.detail {
-  flex: 1 1 auto;
+/* 参数行：缩进到标题下面（对齐 caret 槽 + 间距），不跟状态点/图标抢第一行 */
+.row-sub {
+  display: flex;
+  align-items: center;
   min-width: 0;
+  padding-left: calc(var(--hp-caret-slot) + 6px);
   color: var(--vscode-descriptionForeground);
+}
+
+.row-sub[hidden] {
+  display: none;
+}
+
+.detail {
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.agent {
-  flex: 0 0 auto;
-  max-width: 44%;
-  text-align: right;
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row.blocked .agent {
-  color: var(--vscode-charts-orange);
 }
 
 .row-actions {
@@ -334,22 +340,6 @@ footer {
   color: var(--vscode-foreground);
 }
 
-.agent-row .detail {
-  flex: 0 0 auto;
-  opacity: 0.85;
-}
-
-.pane-row .context {
-  flex: 0 0 auto;
-  max-width: 40%;
-  text-align: right;
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .agent-row.blocked .detail {
   color: var(--vscode-charts-orange);
 }
@@ -388,14 +378,6 @@ footer {
 .pane-row.child .label {
   font-size: 12px;
   max-width: 60%;
-}
-
-.pane-row.child .detail {
-  flex: 0 0 auto;
-}
-
-.pane-row .context {
-  max-width: 38%;
 }
 
 /* ── 内联确认条（破坏性操作二次确认） ──────────────────────────────────── */

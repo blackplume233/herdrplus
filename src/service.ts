@@ -489,6 +489,11 @@ export class HerdrService implements vscode.Disposable {
     this.revealTerminalFor(kind, id);
   }
 
+  /** VSCode 的 Terminal 没有 `isClosed`：自己记关闭事件来判断终端是否还能用。 */
+  private alive(terminal: vscode.Terminal): boolean {
+    return !this.closedTerminals.has(terminal);
+  }
+
   /**
    * 把「这一行对应的终端」亮出来：
    * workspace → 钉在该 workspace 的终端（或跟随焦点的那个）
@@ -512,11 +517,19 @@ export class HerdrService implements vscode.Disposable {
       tabId = pane?.tab_id;
     }
     if (!workspaceId) {
+      // 快照里找不到这一行（视图刚激活/服务端刚重启，快照还没到）：也别让点击变成「没反应」——
+      // 亮出任意一个活着的 herdr 终端，或者直接开一个（TUI 会跟随服务端焦点，所以亮哪个都对）。
+      const anyTerminal = this.herdrTerminals.find((terminal) => this.alive(terminal));
+      this.traceAdd(`reveal: ${kind} ${id} → 快照里没有该行，${anyTerminal ? `亮出 ${anyTerminal.name}` : '开一个'}`);
+      if (anyTerminal) {
+        anyTerminal.show(true);
+      } else {
+        this.openClient({ fresh: true });
+      }
       return;
     }
-    const alive = (terminal: vscode.Terminal): boolean => !this.closedTerminals.has(terminal);
     const pinned = this.herdrTerminals.filter((terminal) => {
-      if (!alive(terminal)) {
+      if (!this.alive(terminal)) {
         return false;
       }
       const pin = this.pinnedTerminals.get(terminal);
@@ -525,12 +538,17 @@ export class HerdrService implements vscode.Disposable {
       }
       return tabId ? pin.tabId === tabId : true;
     });
-    const fallback = this.herdrTerminals.find((terminal) => alive(terminal) && !this.pinnedTerminals.has(terminal));
+    const fallback = this.herdrTerminals.find((terminal) => this.alive(terminal) && !this.pinnedTerminals.has(terminal));
     const terminal = pinned[pinned.length - 1] ?? fallback;
-    if (terminal) {
-      this.traceAdd(`reveal: ${kind} ${id} → ${terminal.name}`);
-      terminal.show(true);
+    if (!terminal) {
+      // 一个能用的 herdr 终端都没有（还没开过 / 用户全关了）：别让点击变成「没反应」——
+      // 直接开一个并钉在这一行对应的 (workspace, tab) 上，之后这一行就有终端可亮了。
+      this.traceAdd(`reveal: ${kind} ${id} → 无可用终端，开一个`);
+      this.openClient({ fresh: true, target: workspaceId, tab: tabId });
+      return;
     }
+    this.traceAdd(`reveal: ${kind} ${id} → ${terminal.name}`);
+    terminal.show(true);
   }
 
   async newWorkspace(): Promise<void> {
@@ -738,7 +756,11 @@ export class HerdrService implements vscode.Disposable {
       return;
     }
     if (!options.fresh && !options.session) {
-      const existing = this.herdrTerminals.find((terminal) => !this.closedTerminals.has(terminal) && !this.pinnedTerminals.has(terminal));
+      // 「先找现成的」：优先跟随焦点的那个；一个都没有时才退而求其次用钉住的（有明确目标时不抢别人的钉住终端）。
+      // 全程找不到才开新的 —— 否则「打开终端」在已有终端时会重复开一个。
+      const existing =
+        this.herdrTerminals.find((terminal) => this.alive(terminal) && !this.pinnedTerminals.has(terminal)) ??
+        (options.target ? undefined : this.herdrTerminals.find((terminal) => this.alive(terminal)));
       if (existing) {
         existing.show();
         if (options.target) {

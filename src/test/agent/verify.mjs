@@ -1,8 +1,11 @@
 /**
  * HerdrPlus 扩展 QA：隔离环境 + CDP 驱动真实 VS Code。
  *
- * 隔离策略：所有 herdr 交互走 `--session herdrplus-qa` 的独立 server（自带 socket），
- * 测试进程与扩展宿主都通过 HERDR_SESSION/HERDR_SOCKET_PATH 指向它 —— 不触碰用户正在用的 session。
+ * 隔离策略：所有 herdr 交互走独立 session 的 server（自带 socket），测试进程与扩展宿主都通过
+ * HERDR_SESSION/HERDR_SOCKET_PATH 指向它 —— 不触碰用户正在用的 session。
+ * 环境变量 `HERDRPLUS_QA_TAG=<tag>` 再隔离一层（session 与 profile 目录都带 tag）：
+ * 两个人（或两个 agent）同时跑 qa 时不会互相 killStaleInstances 掉对方的窗口。
+ * 用法：node src/test/agent/verify.mjs [--keep]
  *
  * 驱动方式：优先用扩展自带的默认快捷键（命令面板输入 CJK 在 CDP 下不可靠），需要看命令列表时才用面板。
  *
@@ -24,7 +27,11 @@ const extensionRoot = resolve(here, '../../..');
 const reportsDir = join(extensionRoot, 'reports', 'qa');
 const keep = process.argv.includes('--keep');
 
-const SESSION = 'herdrplus-qa';
+const TAG = (process.env.HERDRPLUS_QA_TAG ?? '').trim();
+/** 带 tag 时用 `<tag>` 前缀：既隔离自己，也避免匹配到别的 run 的 `*herdrplus-qa-*` kill 模式。 */
+const SESSION = TAG ? `herdrplus-${TAG}-qa` : 'herdrplus-qa';
+/** 临时目录前缀（VSCode profile / workspace）：killStaleInstances 只认自己这一支。 */
+const PROFILE_PREFIX = TAG ? `herdrplus-${TAG}-qa-` : 'herdrplus-qa-';
 const CDP_PORT = Number(process.env.CDP_PORT ?? 9400 + Math.floor(Math.random() * 400));
 // 先看环境的 HERDR_BIN，再从 PATH 找（herdr 安装器会把当前版本的 release 目录加进 PATH），
 // 最后才退回「本机实测过的版本目录」——避免 herdr 升级后这里就失效。
@@ -168,7 +175,7 @@ async function killStaleInstances() {
   await run('powershell', [
     '-NoProfile',
     '-Command',
-    `Get-CimInstance Win32_Process -Filter "Name='${CODE_PROCESS}'" | Where-Object { $_.CommandLine -like '*herdrplus-qa-*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+    `Get-CimInstance Win32_Process -Filter "Name='${CODE_PROCESS}'" | Where-Object { $_.CommandLine -like '*${PROFILE_PREFIX}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
   ]).catch(() => {});
   await sleep(1_500);
 }
@@ -202,8 +209,8 @@ async function main() {
       return tmpdir();
     }
   })();
-  const userDataDir = mkdtempSync(join(tempRoot, 'herdrplus-qa-'));
-  const workspaceDir = mkdtempSync(join(tempRoot, 'herdrplus-ws-'));
+  const userDataDir = mkdtempSync(join(tempRoot, PROFILE_PREFIX));
+  const workspaceDir = mkdtempSync(join(tempRoot, TAG ? `herdrplus-${TAG}-ws-` : 'herdrplus-ws-'));
   // xterm 默认 canvas 渲染，读不到文本；关掉 GPU 加速改用 DOM 渲染，QA 才能断言终端内容。
   mkdirSync(join(userDataDir, 'User'), { recursive: true });
   writeFileSync(
@@ -493,6 +500,27 @@ async function main() {
   );
   await page.keyboard.press('Escape');
   await sleep(500);
+
+  // 4.5) 手上一个内嵌终端都没有时点侧栏行：必须「找一个现成的 / 开一个新的」，不能点了没反应
+  await step('没有内嵌终端时点 workspace 行 → 自动开一个并钉住', async () => {
+    const snap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const target = snap.workspaces.find((workspace) => workspace.label === 'qa-alpha') ?? snap.workspaces[0];
+    if (!target) {
+      record('没有内嵌终端时点行 → 自动开一个并钉在这一行', false, '没有 workspace 可选');
+      return;
+    }
+    const before = await page.locator('.tabs-container .tab').count();
+    await ops.locator(`[data-key="ws:${target.workspace_id}"]`).locator('.row-main').click({ timeout: 8_000 });
+    await sleep(5_000);
+    await shot('04b-reveal-without-terminal');
+    const after = await page.locator('.tabs-container .tab').count();
+    const firstTab = ((await page.locator('.tabs-container .tab').first().innerText().catch(() => '')) || '').replace(/\s+/g, ' ');
+    record(
+      '没有内嵌终端时点行 → 自动开一个并钉在这一行',
+      before === 0 && after >= 1 && firstTab.includes(target.label),
+      `终端页签 ${before} → ${after}，首个页签「${firstTab}」（期望含「${target.label}」）`,
+    );
+  });
 
   // 5) view 标题上的 ▣ / 命令 → 打开 herdr 终端（编辑器区）
   await runCommand('Herdr: 打开 herdr 终端', 9_000);
@@ -974,11 +1002,51 @@ async function main() {
         await sleep(2_000);
       }
     }
+    // 菜单不只该在「点了菜单项」时收起：点到编辑器/终端那边（webview 之外）也要收
+    await tabRow.locator('.label').click({ button: 'right', timeout: 8_000 });
+    await sleep(600);
+    const menuBeforeBlur = await ops.locator('.menu').first().isVisible().catch(() => false);
+    await page.locator('.tabs-container').click({ position: { x: 6, y: 8 } }).catch(() => {});
+    await sleep(800);
+    const menuAfterBlur = await ops.locator('.menu').first().isVisible().catch(() => false);
+    record(
+      '菜单在点到 webview 之外后收起',
+      menuBeforeBlur && !menuAfterBlur,
+      `点前可见=${menuBeforeBlur} → 点编辑器后可见=${menuAfterBlur}`,
+    );
     await shot('10g-tab-menu');
     record(
       'tab 行右键：在当前页签打开不新开、为新页签开终端才 +1',
       items.length === 2 && !/新开一个终端/.test(items[0]) && afterFocus === before && afterNew > afterFocus,
       `菜单「${items.join(' / ')}」；终端页签 ${before} →（当前页签打开）${afterFocus} →（新页签）${afterNew}`,
+    );
+  });
+
+  // 9b3b3) 一个 herdr 终端都没有时点行：不能「点了没反应」，要开一个
+  await step('没有 herdr 终端时点行会自动开一个', async () => {
+    await runCommand('Terminal: Kill All', 2_500);
+    await sleep(2_000);
+    const before = await terminalTabCount();
+    const opsNow = await spaces();
+    const row = opsNow.locator('[data-key^="ws:"]').first();
+    if ((await row.count()) === 0) {
+      record('没有 herdr 终端时点行会自动开一个', false, '侧栏没有 workspace 行');
+      return;
+    }
+    const label = ((await row.innerText().catch(() => '')) || '').split('\n')[0].trim();
+    await row.locator('.row-main').click({ timeout: 10_000 });
+    let after = before;
+    for (let attempt = 0; attempt < 15 && after === 0; attempt++) {
+      after = await terminalTabCount();
+      if (after === 0) {
+        await sleep(2_000);
+      }
+    }
+    await shot('11d-open-without-terminal');
+    record(
+      '没有 herdr 终端时点行会自动开一个',
+      after > 0,
+      `清空后 ${before} 个终端 → 点「${label}」→ ${after} 个`,
     );
   });
 
@@ -1009,7 +1077,7 @@ async function main() {
 
   // 9b4) 多 session：另一个 session 的终端可以和当前终端**同时**显示不同内容（真·多个 herdr 实例）
   await step('绑定另一个 session 的终端：两个终端显示不同内容', async () => {
-    const OTHER = 'herdrplus-qa2';
+    const OTHER = `${SESSION}2`;
     const OTHER_SOCKET = join(process.env.APPDATA ?? '', 'herdr', 'sessions', OTHER, 'herdr.sock');
     // `--session <name>` 只是寻址：目标 session 的 server 没在跑时它直接 `server_not_running` 失败。
     // 要「用某个 session」得像扩展那样设 HERDR_SESSION 环境变量（会按需拉起该 session 的 server）。
@@ -1204,9 +1272,10 @@ async function main() {
     }
     const before = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
     const target = rowOf('qa-agent');
-    await target.hover();
-    await sleep(400);
-    await target.locator('[data-action-key][title*="关闭"]').click();
+    // 用行右键菜单关闭：行内动作只在 hover 时出现，hover→click 之间有被 row-actions 覆盖/重排的窗口（实测会超时）
+    await target.click({ button: 'right', timeout: 8_000 });
+    await sleep(500);
+    await ops.locator('.menu .menu-item', { hasText: '关闭 workspace' }).click({ timeout: 8_000 });
     await sleep(1_000);
     const bar = await confirmBar();
     await bar.locator('[data-act="cancelPending"]').click();

@@ -114,6 +114,11 @@ window.addEventListener('click', (event) => {
     closeMenu();
   }
 });
+// 菜单只靠「侧栏里的点击」收是不够的：点到编辑器/终端/标题栏（都在 webview 之外）时侧栏收不到点击，
+// 菜单会一直挂在那儿。失焦、滚动、窗口尺寸变化都收掉。
+window.addEventListener('blur', () => closeMenu());
+window.addEventListener('wheel', () => closeMenu(), { passive: true });
+window.addEventListener('resize', () => closeMenu());
 /** webview 里的异常回传给 host（进 doctor trace）—— 侧栏白屏这类问题才不会只剩「点了没反应」。 */
 function reportError(message: string): void {
   host.postMessage({ type: 'webview-error', message });
@@ -570,14 +575,19 @@ function createRow(model: RowModel): HTMLElement {
   node.dataset.key = model.key;
   const kind = model.key.slice(0, model.key.indexOf(':'));
   const id = model.key.slice(model.key.indexOf(':') + 1);
-  node.innerHTML = `<button class="caret" data-act="toggleWorkspace" data-id="${id}"></button>
-    <span class="dot"></span>
-    <span class="row-main" data-act="focus" data-kind="${kind}" data-id="${id}">
-      <span class="label"></span>
+  // 两行：第一行是「谁」（caret + 状态点 + 标题 + 行内动作），第二行是它的参数
+  // （容量/目录/状态/所属 workspace）。参数多的时候横着挤会把标题压没，所以拆行。
+  node.innerHTML = `<div class="row-top">
+      <button class="caret" data-act="toggleWorkspace" data-id="${id}"></button>
+      <span class="dot"></span>
+      <span class="row-main" data-act="focus" data-kind="${kind}" data-id="${id}">
+        <span class="label"></span>
+      </span>
+      <span class="row-actions"></span>
+    </div>
+    <div class="row-sub" data-act="focus" data-kind="${kind}" data-id="${id}" hidden>
       <span class="detail"></span>
-    </span>
-    <span class="context" data-act="focus" data-kind="${kind}" data-id="${id}"></span>
-    <span class="row-actions"></span>`;
+    </div>`;
   return node;
 }
 
@@ -606,11 +616,12 @@ function updateRow(node: HTMLElement, model: RowModel): void {
     }
   }
   applyText(node.querySelector<HTMLElement>('.label'), model.label);
-  applyText(node.querySelector<HTMLElement>('.detail'), model.detail);
-  const context = node.querySelector<HTMLElement>('.context');
-  if (context) {
-    applyText(context, model.context);
-    context.hidden = model.context.length === 0;
+  // 参数走第二行：detail（容量/目录/状态）+ context（它在哪个 workspace/tab）合成一行。
+  const sub = node.querySelector<HTMLElement>('.row-sub');
+  if (sub) {
+    const params = [model.detail, model.context].filter((part) => part.length > 0).join(' · ');
+    applyText(sub.querySelector<HTMLElement>('.detail'), params);
+    sub.hidden = params.length === 0;
   }
   patchActions(node.querySelector<HTMLElement>('.row-actions'), model);
 }
