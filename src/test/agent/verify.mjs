@@ -1186,7 +1186,7 @@ async function main() {
     record(
       '「在当前 workspace 新开一个终端」新增一个钉在该 workspace 的终端页签',
       after > before && label.length > 0,
-      `${label}：终端页签 ${before} → ${after}`,
+      `${label}：终端页签 ${before} → ${after}；当时页签：${(await tabTitles()).join(' / ') || '（无）'}`,
     );
   });
 
