@@ -1123,6 +1123,11 @@ async function main() {
       throw lastError ?? new Error('另一个 session 的 workspace 建不出来');
     }
     marker = 'MARKER-OTHER';
+    // `pane run` 的输出只有在**该 pane 被渲染**时才进 TUI 画面：先显式把另一个 session 的焦点定到
+    // 这个 workspace/pane 上（`--focus` 不保证生效），再 echo。
+    const otherWorkspaceId = created.workspace?.workspace_id ?? created.root_pane.workspace_id;
+    await otherHerdr(['workspace', 'focus', otherWorkspaceId]).catch(() => {});
+    await otherHerdr(['pane', 'focus', created.root_pane.pane_id]).catch(() => {});
     await otherHerdr(['pane', 'run', created.root_pane.pane_id, `echo ${marker}`]);
     await sleep(1_500);
 
