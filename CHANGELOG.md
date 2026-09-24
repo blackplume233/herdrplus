@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- **归档操作补到各个入口**（归档 = 关掉容器，workspace 与目录都留着）：
+  - 侧栏 **tab 行右键** → `归档这个 tab`：关掉这个 tab 容器；workspace 里只剩这一个 tab 时自动退化成归档整个 workspace（否则 herdr 会补个空 tab，看着像没生效）；tab 里有没结束的 agent 先出确认条。
+  - 侧栏 **workspace 行右键** → `归档关闭空闲 workspace…`：原来只有 view 标题的图标和命令面板能到，现在行里也能到。
+  - **编辑器页签 / 终端页签右键** → `归档这个终端所在的 workspace`：钉住的终端归档它钉的那个 workspace，没钉则用当前焦点 workspace（有 agent 在跑同样先确认）。
+- **扩展启动时自动拉起 herdr server**：激活时若当前 session 的 server 没在跑，就用 CLI 把它起起来（已经跑着则复用，不动它）——侧栏不用再等人手动连。可关：设置 `herdrplus.autoStartServer`；手动入口：命令 `Herdr: 启动 / 连接 herdr server`。
+- QA：新增「侧栏 tab 行可归档：tab 消失、workspace 还在」；命令面板 / 编辑器页签右键 / workspace 行菜单三条断言补上新入口；「server 恢复后侧栏自动重连」改成**由扩展启动 server**（不再由测试自己 spawn，这才真的验到新能力）。
+
 ## 0.1.4
 
 - **点了没反应 → 一定开一个终端**：侧栏行点击现在保证「有反应」——目标行有终端就亮出来，一个可用的都没有就**直接开一个**（钉在这一行对应的 workspace/tab 上）；连快照里都找不到这一行时（视图刚激活/服务端刚重启）也会亮出/开一个，不再提前 return。
