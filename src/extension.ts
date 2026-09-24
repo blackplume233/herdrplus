@@ -55,6 +55,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('herdrplus.openClient', () => service.openClient()),
     vscode.commands.registerCommand('herdrplus.newTerminal', () => service.newTerminalView()),
     vscode.commands.registerCommand('herdrplus.newTerminalHere', () => service.newTerminalHere()),
+    vscode.commands.registerCommand('herdrplus.archiveWorkspaceOfTerminal', () => service.archiveWorkspaceOfTerminal()),
+    vscode.commands.registerCommand('herdrplus.ensureServer', () => service.ensureServer({ notify: true })),
     vscode.commands.registerCommand('herdrplus.startAgent', () => service.startAgent({ mode: 'newTerminal' })),
     vscode.commands.registerCommand('herdrplus.startAgentHere', () =>
       service.startAgent({ mode: 'here', paneId: undefined }),

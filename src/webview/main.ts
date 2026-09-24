@@ -671,6 +671,7 @@ function renderMenu(): void {
       ? [
           { act: 'focusTab', label: '在当前页签打开（切 herdr 到这个 tab）', icon: 'terminal' },
           { act: 'openTerminalForTab', label: '为新页签开一个终端（钉在这个 tab）', icon: 'terminalNew' },
+          { act: 'archiveTab', label: '归档这个 tab（关掉容器，workspace 与目录都留着）', icon: 'archive' },
         ]
       : menu.kind === 'pane'
       ? [
@@ -691,6 +692,7 @@ function renderMenu(): void {
             ? [{ act: 'clearWorkspaceCwd', label: '清除工作目录（回到跟随 pane）', icon: 'close' }]
             : []),
           { act: 'renameWorkspace', label: '重命名 workspace…', icon: 'rename' },
+          { act: 'archiveSweep', label: '归档关闭空闲 workspace…', icon: 'archive' },
           { act: 'closeWorkspace', label: '关闭 workspace', icon: 'close', danger: true },
         ];
   menuNode.hidden = false;

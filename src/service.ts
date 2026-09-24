@@ -13,10 +13,10 @@ export type SidebarSection = 'spaces' | 'agents';
 
 /** 待确认的破坏性操作：侧栏顶部内联确认条渲染它，`confirmPending` 才真正执行。 */
 interface PendingConfirm {
-  kind: 'closeWorkspace' | 'sweep' | 'closePane';
+  kind: 'closeWorkspace' | 'sweep' | 'closePane' | 'closeTab';
   title: string;
   confirmLabel: string;
-  targets: Array<{ kind: 'workspace' | 'pane'; id: string }>;
+  targets: Array<{ kind: 'workspace' | 'pane' | 'tab'; id: string }>;
 }
 
 const execFileAsync = promisify(execFile);
@@ -177,10 +177,13 @@ export class HerdrService implements vscode.Disposable {
       const found = await locateHerdrOnPath();
       if (found) {
         this.replaceClient(found);
-        return;
       }
     }
     this.client.start();
+    // 启动就把 server 带起来（默认开；`herdrplus.autoStartServer` 可关）：没在跑时 CLI 会拉起它。
+    if (vscode.workspace.getConfiguration('herdrplus').get<boolean>('autoStartServer') !== false) {
+      void this.ensureServer();
+    }
   }
 
   /** 生成对内嵌终端生效的 herdr 配置（默认隐藏 herdr 自带侧栏）。 */
@@ -278,7 +281,11 @@ export class HerdrService implements vscode.Disposable {
     let closed = 0;
     for (const target of pending.targets) {
       const ok =
-        target.kind === 'workspace' ? await this.closeWorkspaceNow(target.id) : await this.closePaneNow(target.id);
+        target.kind === 'workspace'
+          ? await this.closeWorkspaceNow(target.id)
+          : target.kind === 'tab'
+            ? await this.closeTabNow(target.id)
+            : await this.closePaneNow(target.id);
       if (ok) {
         closed += 1;
       }
@@ -290,7 +297,9 @@ export class HerdrService implements vscode.Disposable {
         ? `HerdrPlus：已归档关闭 ${closed}/${pending.targets.length} 个 workspace。`
         : pending.kind === 'closePane'
           ? `HerdrPlus：已关闭 ${closed} 个 pane（进程已结束）。`
-          : `HerdrPlus：已关闭 ${closed} 个 workspace。`,
+          : pending.kind === 'closeTab'
+            ? `HerdrPlus：已归档 ${closed} 个 tab（workspace 与目录都留着）。`
+            : `HerdrPlus：已关闭 ${closed} 个 workspace。`,
     );
   }
 
@@ -310,6 +319,112 @@ export class HerdrService implements vscode.Disposable {
       this.traceAdd(`close pane ${paneId} failed: ${String(error)}`);
       return false;
     }
+  }
+
+  private async closeTabNow(tabId: string): Promise<boolean> {
+    try {
+      await this.client.request('tab.close', { tab_id: tabId });
+      return true;
+    } catch (error) {
+      this.traceAdd(`close tab ${tabId} failed: ${String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 归档一个 tab：关掉这个容器，workspace 与目录都留着（跟「归档关闭 workspace」同一套语义）。
+   * workspace 里只剩这一个 tab 时退化成归档整个 workspace —— 否则 herdr 会自己补一个空 tab，看着像没生效。
+   * tab 里有没结束的 agent 时先出确认条（关 tab 会连进程一起结束）。
+   */
+  private async archiveTab(tabId: string): Promise<void> {
+    const snapshot = this.snapshot;
+    const tab = snapshot?.tabs.find((item) => item.tab_id === tabId);
+    const workspace = snapshot?.workspaces.find((item) => item.workspace_id === tab?.workspace_id);
+    if (workspace && workspace.tab_count <= 1) {
+      this.traceAdd(`archive tab ${tabId} → workspace ${workspace.workspace_id} 只剩一个 tab，改归档整个 workspace`);
+      await this.closeWorkspace(workspace.workspace_id);
+      return;
+    }
+    const live = (snapshot?.panes ?? []).filter(
+      (pane) => pane.tab_id === tabId && (pane.agent_status === 'working' || pane.agent_status === 'blocked'),
+    );
+    if (live.length > 0) {
+      this.setPending({
+        kind: 'closeTab',
+        title: `tab「${tab?.label ?? tabId}」里还有 ${live.length} 个没结束的 Agent（${live
+          .map((pane) => pane.display_agent ?? pane.agent ?? pane.pane_id)
+          .join('、')}），归档会让它们连同进程一起结束。`,
+        confirmLabel: '仍然归档',
+        targets: [{ kind: 'tab', id: tabId }],
+      });
+      return;
+    }
+    await this.closeTabNow(tabId);
+    await this.refresh();
+  }
+
+  /**
+   * 编辑器页签 / 终端页签右键的「归档」：归档**这个终端所在的 workspace**。
+   * 终端钉在哪个 workspace 就归档哪个；不是钉住的终端则退回当前焦点 workspace。
+   */
+  async archiveWorkspaceOfTerminal(): Promise<void> {
+    const terminal = vscode.window.activeTerminal;
+    const pin = terminal ? this.pinnedTerminals.get(terminal) : undefined;
+    const target = pin?.workspaceId ?? (await this.focusedWorkspaceId()) ?? this.selectedWorkspaceId;
+    if (!target) {
+      void vscode.window.showInformationMessage('HerdrPlus：没找到可归档的 workspace（先开一个 herdr 终端或点一下侧栏行）。');
+      return;
+    }
+    await this.closeWorkspace(target);
+  }
+
+  /** 现读服务端焦点（本地快照可能是旧的）。 */
+  private async focusedWorkspaceId(): Promise<string | undefined> {
+    await this.refresh();
+    return this.snapshot?.focused_workspace_id ?? undefined;
+  }
+
+  /**
+   * 确保当前 session 的 herdr server 在运行（启动扩展时自动做一次，也可手动）。
+   * 机制：CLI 调用会按需把该 session 的 server 拉起来，所以「先 ping（socket 优先、断了走 CLI）再等就绪」
+   * 就等于「没起就起一个，已经起了就复用」。
+   */
+  async ensureServer(options: { notify?: boolean } = {}): Promise<boolean> {
+    if (!this.herdrPath) {
+      const found = await locateHerdrOnPath();
+      if (found) {
+        this.replaceClient(found);
+      }
+    }
+    if (!this.herdrPath) {
+      if (options.notify) {
+        void vscode.window.showWarningMessage('HerdrPlus：没找到 herdr 可执行文件，无法启动 server。');
+      }
+      return false;
+    }
+    const wasReady = this.client.currentState.kind === 'ready';
+    try {
+      await this.client.request('ping', {});
+    } catch (error) {
+      this.traceAdd(`ensureServer: ping 未通（${String(error)}）`);
+    }
+    for (let attempt = 0; attempt < 16 && this.client.currentState.kind !== 'ready'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await this.client.refresh().catch(() => {});
+    }
+    const ready = this.client.currentState.kind === 'ready';
+    this.traceAdd(`ensureServer: wasReady=${wasReady} → ${this.client.currentState.kind}`);
+    if (ready) {
+      await this.refresh();
+      if (options.notify) {
+        void vscode.window.showInformationMessage(
+          wasReady ? 'HerdrPlus：herdr server 已经在跑（已刷新连接）。' : 'HerdrPlus：herdr server 已启动。',
+        );
+      }
+    } else if (options.notify) {
+      void vscode.window.showWarningMessage('HerdrPlus：herdr server 没能起来，看「诊断」报告里的 trace。');
+    }
+    return ready;
   }
 
   /**
@@ -425,6 +540,14 @@ export class HerdrService implements vscode.Disposable {
         if (id) {
           await this.openTabTerminals(id);
         }
+        return;
+      case 'archiveTab':
+        if (id) {
+          await this.archiveTab(id);
+        }
+        return;
+      case 'archiveSweep':
+        await this.sweepWorkspaces();
         return;
       case 'openTerminalPinned':
         if (id) {

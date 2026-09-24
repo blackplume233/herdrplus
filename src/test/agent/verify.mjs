@@ -495,7 +495,11 @@ async function main() {
   await shot('04-command-palette');
   record(
     '命令面板列出 HerdrPlus 命令',
-    /打开 herdr 终端/.test(paletteText) && /启动 Agent（新终端）/.test(paletteText) && /在当前 workspace 新开一个终端/.test(paletteText),
+    /打开 herdr 终端/.test(paletteText) &&
+      /启动 Agent（新终端）/.test(paletteText) &&
+      /在当前 workspace 新开一个终端/.test(paletteText) &&
+      /归档这个终端所在的 workspace/.test(paletteText) &&
+      /启动 \/ 连接 herdr server/.test(paletteText),
     paletteText.replace(/\s+/g, ' ').slice(0, 140),
   );
   await page.keyboard.press('Escape');
@@ -609,7 +613,10 @@ async function main() {
   const menuText = await page.locator('.context-view').innerText().catch(() => '');
   record(
     '终端 tab 右键含 HerdrPlus 项、且已无「拆分 Pane」',
-    /启动 Agent（新终端）/.test(menuText) && /在当前 workspace 新开一个终端/.test(menuText) && !/拆分 Pane/.test(menuText),
+    /启动 Agent（新终端）/.test(menuText) &&
+      /在当前 workspace 新开一个终端/.test(menuText) &&
+      /归档这个终端所在的 workspace/.test(menuText) &&
+      !/拆分 Pane/.test(menuText),
     menuText.replace(/\s+/g, ' ').slice(-120),
   );
   await page.keyboard.press('Escape');
@@ -869,8 +876,12 @@ async function main() {
     await sleep(400);
     const hiddenAfter = await ops.locator('.menu').isHidden();
     record(
-      '行右键菜单含 6 项、带「设置工作目录」且 Esc 可关',
-      visible && items.length === 6 && hiddenAfter && items.some((item) => item.includes('设置工作目录')),
+      '行右键菜单含 7 项、带「设置工作目录」与「归档关闭空闲」且 Esc 可关',
+      visible &&
+        items.length === 7 &&
+        hiddenAfter &&
+        items.some((item) => item.includes('设置工作目录')) &&
+        items.some((item) => item.includes('归档关闭空闲')),
       items.map((item) => item.trim()).join(' / '),
     );
   });
@@ -1005,9 +1016,13 @@ async function main() {
       }
     }
     // 菜单不只该在「点了菜单项」时收起：点到编辑器/终端那边（webview 之外）也要收
-    await tabRow.locator('.label').click({ button: 'right', timeout: 8_000 });
-    await sleep(600);
-    const menuBeforeBlur = await ops.locator('.menu').first().isVisible().catch(() => false);
+    // （右键开菜单偶发要第二次才出：上一步刚开完终端会抢焦点，这里做个有界重试，别记假红）
+    let menuBeforeBlur = false;
+    for (let attempt = 0; attempt < 5 && !menuBeforeBlur; attempt++) {
+      await tabRow.locator('.label').click({ button: 'right', timeout: 8_000 });
+      await sleep(700);
+      menuBeforeBlur = await ops.locator('.menu').first().isVisible().catch(() => false);
+    }
     await page.locator('.tabs-container').click({ position: { x: 6, y: 8 } }).catch(() => {});
     await sleep(800);
     const menuAfterBlur = await ops.locator('.menu').first().isVisible().catch(() => false);
@@ -1083,6 +1098,47 @@ async function main() {
     );
   });
 
+  // 9b3d) 侧栏 tab 行：归档（关掉这个容器，workspace 与目录都留着）
+  await step('侧栏 tab 行可归档：tab 消失、workspace 还在', async () => {
+    const label = `qa-arch-${Date.now().toString(36).slice(-4)}`;
+    const created = JSON.parse(await herdr(['workspace', 'create', '--label', label])).result;
+    const wsId = created.workspace?.workspace_id ?? created.root_pane.workspace_id;
+    await herdr(['tab', 'create', '--workspace', wsId, '--label', 'arch-2']);
+    await sleep(3_000);
+    const before = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const tabs = before.tabs.filter((tab) => tab.workspace_id === wsId);
+    const target = tabs[tabs.length - 1];
+    if (!target || tabs.length < 2) {
+      record('侧栏 tab 行可归档：tab 消失、workspace 还在', false, `建不出 2 个 tab（tabs=${tabs.length}）`);
+      return;
+    }
+    const opsNow = await spaces();
+    const wsRow = opsNow.locator(`[data-key="ws:${wsId}"]`);
+    for (let attempt = 0; attempt < 12 && (await wsRow.count()) === 0; attempt += 1) {
+      await sleep(1_000);
+    }
+    await ensureExpanded(wsId, target.tab_id);
+    await opsNow.locator(`[data-key="tab:${target.tab_id}"]`).locator('.label').click({ button: 'right', timeout: 8_000 });
+    await sleep(600);
+    const items = (await opsNow.locator('.menu .menu-item').allInnerTexts()).map((text) => text.trim());
+    const hasItem = items.some((text) => /归档这个 tab/.test(text));
+    await opsNow.locator('.menu .menu-item', { hasText: '归档这个 tab' }).click({ timeout: 8_000 });
+    let after = tabs.length;
+    for (let attempt = 0; attempt < 12 && after >= tabs.length; attempt += 1) {
+      await sleep(1_500);
+      const now = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+      after = now.tabs.filter((tab) => tab.workspace_id === wsId).length;
+    }
+    const nowSnap = JSON.parse(await herdr(['api', 'snapshot'])).result.snapshot;
+    const wsStillThere = nowSnap.workspaces.some((workspace) => workspace.workspace_id === wsId);
+    await shot('11e-archive-tab');
+    record(
+      '侧栏 tab 行可归档：tab 消失、workspace 还在',
+      hasItem && after === tabs.length - 1 && wsStillThere,
+      `菜单含「归档这个 tab」=${hasItem}；tab ${tabs.length} → ${after}；workspace 仍在=${wsStillThere}`,
+    );
+  });
+
   // 9b4) 多 session：另一个 session 的终端可以和当前终端**同时**显示不同内容（真·多个 herdr 实例）
   await step('绑定另一个 session 的终端：两个终端显示不同内容', async () => {
     const OTHER = `${SESSION}2`;
@@ -1127,9 +1183,7 @@ async function main() {
     // 这个 workspace/pane 上（`--focus` 不保证生效），再 echo。
     const otherWorkspaceId = created.workspace?.workspace_id ?? created.root_pane.workspace_id;
     await otherHerdr(['workspace', 'focus', otherWorkspaceId]).catch(() => {});
-    await otherHerdr(['pane', 'focus', created.root_pane.pane_id]).catch(() => {});
-    await otherHerdr(['pane', 'run', created.root_pane.pane_id, `echo ${marker}`]);
-    await sleep(1_500);
+    marker = 'MARKER-OTHER';
 
     const before = await terminalTabCount();
     await runCommand('Herdr: 新开 herdr 终端视图', 2_200);
@@ -1140,8 +1194,14 @@ async function main() {
     await sleep(16_000);
     const after = await terminalTabCount();
     const otherText0 = await focusTab(`@${OTHER}`);
+    // **attach 之后再 echo**：herdr 客户端只画 attach 之后的变化，attach 前的内容不会补画
+    //（app-shell spec 里记着这条 trap）——「先 echo 再开终端」永远等不到 marker。
+    await otherHerdr(['workspace', 'focus', created.workspace?.workspace_id]).catch(() => {});
+    await otherHerdr(['pane', 'focus', created.root_pane.pane_id]).catch(() => {});
+    await sleep(1_500);
+    await otherHerdr(['pane', 'run', created.root_pane.pane_id, `echo ${marker}`]);
     let otherText = otherText0;
-    for (let attempt = 0; attempt < 10 && !new RegExp(marker).test(otherText); attempt++) {
+    for (let attempt = 0; attempt < 12 && !new RegExp(marker).test(otherText); attempt++) {
       await sleep(2_000);
       otherText = await visibleTerminalText();
     }
@@ -1399,7 +1459,8 @@ async function main() {
       (await page.locator('.statusbar-item').filter({ hasText: 'herdr' }).count()) > 0 ? '在' : '不见了'
     }`,
   );
-  await startServer();
+  // 让**扩展**把 server 拉起来（新能力：不是由测试自己 spawn）
+  await runCommand('Herdr: 启动 / 连接 herdr server', 12_000);
   await sleep(10_000);
   const recoveredText = await sidebarText();
   const recovered = await waitForSidebar((text) => /qa-alpha|qa-renamed|protocol/.test(text), 25_000);

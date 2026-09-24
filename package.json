@@ -178,6 +178,18 @@
         "title": "在当前 workspace 新开一个终端",
         "category": "Herdr",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "herdrplus.archiveWorkspaceOfTerminal",
+        "title": "归档这个终端所在的 workspace（关容器，保留目录）",
+        "category": "Herdr",
+        "icon": "$(archive)"
+      },
+      {
+        "command": "herdrplus.ensureServer",
+        "title": "启动 / 连接 herdr server",
+        "category": "Herdr",
+        "icon": "$(server-process)"
       }
     ],
     "menus": {
@@ -186,6 +198,11 @@
           "command": "herdrplus.startAgent",
           "group": "herdr@1",
           "when": "resourceScheme == 'vscode-terminal'"
+        },
+        {
+          "command": "herdrplus.archiveWorkspaceOfTerminal",
+          "when": "resourceScheme == 'vscode-terminal'",
+          "group": "herdr@2"
         },
         {
           "command": "herdrplus.newTerminalHere",
@@ -199,6 +216,10 @@
           "group": "herdr@1"
         },
         {
+          "command": "herdrplus.archiveWorkspaceOfTerminal",
+          "group": "herdr@2"
+        },
+        {
           "command": "herdrplus.newTerminalHere",
           "group": "herdrplus@3"
         }
@@ -208,6 +229,10 @@
           "command": "herdrplus.startAgent",
           "when": "terminalFocus",
           "group": "herdr@1"
+        },
+        {
+          "command": "herdrplus.archiveWorkspaceOfTerminal",
+          "group": "herdr@2"
         },
         {
           "command": "herdrplus.newTerminalHere",
@@ -249,6 +274,11 @@
           "type": "string",
           "default": "",
           "description": "herdr 可执行文件路径。留空则自动探测（where herdr / 常见安装目录）。"
+        },
+        "herdrplus.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "VS Code 启动这个扩展时自动把 herdr server 拉起来（已经跑着就复用）。关掉则只在手动执行「Herdr: 启动 / 连接 herdr server」时才启动。"
         },
         "herdrplus.socketPath": {
           "type": "string",

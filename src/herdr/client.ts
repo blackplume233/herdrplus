@@ -470,6 +470,8 @@ function cliArgs(method: string, params: Record<string, unknown>): string[] | un
       return typeof params.workspace_id === 'string' ? ['workspace', 'close', params.workspace_id] : undefined;
     case 'tab.focus':
       return typeof params.tab_id === 'string' ? ['tab', 'focus', params.tab_id] : undefined;
+    case 'tab.close':
+      return typeof params.tab_id === 'string' ? ['tab', 'close', params.tab_id] : undefined;
     case 'pane.read': {
       const args = ['pane', 'read', typeof params.pane_id === 'string' ? params.pane_id : ''];
       if (typeof params.source === 'string') {
